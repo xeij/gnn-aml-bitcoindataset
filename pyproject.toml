@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aml-gnn"
+version = "0.1.0"
+description = "Graph neural networks for anti-money-laundering detection on the Elliptic Bitcoin dataset"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.4",
+    "torch-geometric>=2.6",
+    "gradio>=4.44",
+    "scikit-learn>=1.5",
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "plotly>=5.24",
+    "networkx>=3.3",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "mypy>=1.11", "ruff>=0.6"]
+
+[project.scripts]
+aml-train = "aml_gnn.cli.train:main"
+aml-app = "aml_gnn.cli.serve:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::FutureWarning", "ignore::UserWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "D"]
+ignore = ["D107", "D203", "D213"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+disallow_untyped_defs = true
+ignore_missing_imports = true

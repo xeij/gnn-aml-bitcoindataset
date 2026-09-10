@@ -1,0 +1,38 @@
+# The README is maintained outside version control.
+README.md
+
+# Data and trained artifacts
+data/
+artifacts/
+*.pt
+*.pth
+*.csv
+*.zip
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Gradio
+.gradio/
+flagged/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store

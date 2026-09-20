@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Optional, Sequence
 
 from ..config import ExperimentConfig
 from ..data.elliptic import EllipticDataModule
@@ -81,7 +81,7 @@ def apply_overrides(config: ExperimentConfig, args: argparse.Namespace) -> Exper
     return config
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     """Run a training experiment and return a process exit code."""
     args = build_parser().parse_args(argv)
     configure_logging(args.log_level, log_file=args.log_file, force=True)
@@ -110,10 +110,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         config,
         scaler_state=scaler.state_dict() if scaler is not None else None,
     )
-    result = trainer.fit()
+    trainer.fit()
 
+    # The trainer already logs the run summary on completion, so the CLI only
+    # persists the resolved config beside the checkpoint.
     config.to_yaml(Path(config.train.checkpoint_dir) / f"{config.name}_config.yaml")
-    print("\n" + result.summary())
     return 0
 
 

@@ -10,7 +10,6 @@ them, and the trainer can stay entirely architecture-agnostic.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Optional
 
 import torch
 import torch.nn.functional as F
@@ -82,7 +81,9 @@ class BaseNodeClassifier(nn.Module, ABC):
     def num_parameters(self, *, trainable_only: bool = True) -> int:
         """Count parameters, by default only those requiring gradients."""
         return sum(
-            p.numel() for p in self.parameters() if p.requires_grad or not trainable_only
+            p.numel()
+            for p in self.parameters()
+            if p.requires_grad or not trainable_only
         )
 
     def describe(self) -> str:
@@ -110,7 +111,8 @@ class ClassifierHead(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         """Return logits for each row of ``x``."""
-        return self.net(x)
+        logits: Tensor = self.net(x)
+        return logits
 
 
 class ResidualProjection(nn.Module):
@@ -118,8 +120,10 @@ class ResidualProjection(nn.Module):
 
     def __init__(self, in_channels: int, out_channels: int) -> None:
         super().__init__()
-        self.projection: Optional[nn.Linear] = (
-            None if in_channels == out_channels else nn.Linear(in_channels, out_channels, bias=False)
+        self.projection: nn.Linear | None = (
+            None
+            if in_channels == out_channels
+            else nn.Linear(in_channels, out_channels, bias=False)
         )
 
     def forward(self, x: Tensor) -> Tensor:

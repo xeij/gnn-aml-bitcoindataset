@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Callable, Dict, Type, TypeVar
+from collections.abc import Callable
+from typing import TypeVar
 
 from ..config import ModelConfig
 from ..logging_utils import get_logger
@@ -10,9 +11,9 @@ from .base import BaseNodeClassifier
 
 logger = get_logger(__name__)
 
-_REGISTRY: Dict[str, Type[BaseNodeClassifier]] = {}
+_REGISTRY: dict[str, type[BaseNodeClassifier]] = {}
 
-_M = TypeVar("_M", bound=Type[BaseNodeClassifier])
+_M = TypeVar("_M", bound=type[BaseNodeClassifier])
 
 
 def register_model(name: str) -> Callable[[_M], _M]:
@@ -39,7 +40,7 @@ def available_models() -> list[str]:
     return sorted(_REGISTRY)
 
 
-def get_model_class(name: str) -> Type[BaseNodeClassifier]:
+def get_model_class(name: str) -> type[BaseNodeClassifier]:
     """Look up a registered architecture class by name."""
     key = name.lower()
     if key not in _REGISTRY:
@@ -54,6 +55,7 @@ def build_model(config: ModelConfig, *, in_channels: int, out_channels: int) -> 
         config: Architecture hyper-parameters, including the registry name.
         in_channels: Input feature dimensionality.
         out_channels: Number of classes.
+
     """
     cls = get_model_class(config.name)
     model = cls(in_channels=in_channels, out_channels=out_channels, config=config)

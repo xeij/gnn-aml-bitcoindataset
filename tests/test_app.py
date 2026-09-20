@@ -7,7 +7,12 @@ import pytest
 import torch
 
 from aml_gnn.app import visualisations as viz
-from aml_gnn.app.components import metric_headline, status_banner
+from aml_gnn.app.components import (
+    metric_headline,
+    metric_tiles,
+    section_title,
+    status_banner,
+)
 from aml_gnn.app.theme import normalise_risk
 from aml_gnn.engine.metrics import evaluate_predictions
 
@@ -29,7 +34,7 @@ def test_risk_ramp_is_anchored_to_the_threshold() -> None:
 def test_risk_ramp_is_monotonic() -> None:
     """A riskier transaction never maps to a lower ramp position."""
     values = [normalise_risk(p / 20, 0.6) for p in range(21)]
-    assert all(a <= b for a, b in zip(values, values[1:]))
+    assert all(a <= b for a, b in zip(values, values[1:], strict=False))
 
 
 def test_confusion_figure_annotates_every_cell() -> None:
@@ -75,6 +80,51 @@ def test_attribution_figure_handles_missing_attribution() -> None:
 
 
 def test_components_emit_html() -> None:
-    """The HTML fragments render as markup."""
-    assert status_banner("hello", tone="ok").startswith("<div")
-    assert "22px" in metric_headline([("Metric", "0.5")])
+    """The HTML fragments render as markup carrying their own content."""
+    banner = status_banner("hello", tone="ok")
+    assert banner.startswith("<div")
+    assert "hello" in banner
+    headline = metric_headline([("Metric", "0.5")])
+    assert "Metric" in headline and "0.5" in headline
+
+
+def test_metric_tiles_carry_their_interpretation() -> None:
+    """Each tile renders its label, its value and the baseline to read it against."""
+    html = metric_tiles([("hit rate", "66.2%", "against a 6.5% base rate")])
+    assert "hit rate" in html
+    assert "66.2%" in html
+    assert "against a 6.5% base rate" in html
+
+
+def test_status_tones_are_distinct() -> None:
+    """Each tone paints a different accent, so the rule colour carries meaning."""
+    rendered = {tone: status_banner("x", tone=tone) for tone in ("info", "warn", "error", "ok")}
+    assert len(set(rendered.values())) == 4
+
+
+def test_unknown_tone_falls_back_rather_than_raising() -> None:
+    """An unrecognised tone degrades to the informational accent."""
+    assert status_banner("x", tone="nonsense") == status_banner("x", tone="info")
+
+
+def test_section_title_renders_its_subtitle() -> None:
+    """A section heading carries its explanatory line when one is given."""
+    assert "why it matters" in section_title("Calibration", "why it matters")
+    assert "Calibration" in section_title("Calibration")
+
+
+def test_subgraph_traces_carry_node_indices(synthetic_explanation) -> None:
+    """Both layouts tag their node trace with the index a click must resolve."""
+    for build in (viz.subgraph_figure, viz.subgraph_figure_3d):
+        figure = build(synthetic_explanation, threshold=0.5)
+        tagged = [trace for trace in figure.data if trace.customdata is not None]
+        assert tagged, f"{build.__name__} lost its selection payload"
+        assert list(tagged[0].customdata) == synthetic_explanation.node_indices.tolist()
+
+
+def test_subgraph_3d_is_actually_three_dimensional(synthetic_explanation) -> None:
+    """The 3-D builder emits Scatter3d traces and a scene, not a flat figure."""
+    figure = viz.subgraph_figure_3d(synthetic_explanation, threshold=0.5)
+    assert any(isinstance(trace, go.Scatter3d) for trace in figure.data)
+    assert figure.layout.scene is not None
+    assert not any(isinstance(trace, go.Scatter) for trace in figure.data)

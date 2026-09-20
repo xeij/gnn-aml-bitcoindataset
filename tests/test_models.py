@@ -38,7 +38,9 @@ def test_probabilities_are_normalised(name: str, synthetic_graph: Data) -> None:
     config = ModelConfig(**{**_SMALL.to_dict(), "name": name})
     model = build_model(config, in_channels=165, out_channels=2)
     probabilities = model.predict_proba(synthetic_graph.x, synthetic_graph.edge_index)
-    assert torch.allclose(probabilities.sum(dim=-1), torch.ones(synthetic_graph.num_nodes), atol=1e-5)
+    assert torch.allclose(
+        probabilities.sum(dim=-1), torch.ones(synthetic_graph.num_nodes), atol=1e-5
+    )
 
 
 def test_predict_proba_restores_training_mode(synthetic_graph: Data) -> None:

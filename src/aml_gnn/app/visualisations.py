@@ -7,7 +7,7 @@ than one series is present so identity never rests on colour alone.
 
 from __future__ import annotations
 
-from typing import Mapping, Optional, Sequence
+from collections.abc import Mapping, Sequence
 
 import networkx as nx
 import numpy as np
@@ -22,16 +22,17 @@ from ..logging_utils import get_logger
 from .theme import (
     EDGE_LINE,
     FOCUS_RING,
-    ILLICIT_RED,
-    LICIT_BLUE,
+    ILLICIT_TONE,
+    LICIT_TONE,
     NEUTRAL_GREY,
     RISK_COLORSCALE,
     SEQUENTIAL_BLUE,
     TEXT_MUTED,
-    UNKNOWN_GREY,
+    UNKNOWN_TONE,
     axis_style,
     base_layout,
     normalise_risk,
+    scene_layout,
 )
 
 logger = get_logger(__name__)
@@ -81,27 +82,19 @@ def subgraph_figure(
         explanation: A scored neighbourhood from the inference service.
         threshold: Current operating threshold, used to anchor the colour ramp.
         layout_seed: Seed for the spring layout, so repeated views are stable.
+
     """
     num_nodes = explanation.num_nodes
     if num_nodes == 0:
         return empty_figure("No neighbourhood to display.")
 
-    graph = nx.Graph()
-    graph.add_nodes_from(range(num_nodes))
-    edges = explanation.edge_index.t().tolist()
-    graph.add_edges_from((int(u), int(v)) for u, v in edges if u != v)
+    graph, edges, center_local = _neighbourhood_graph(explanation)
 
     # k scales the ideal edge length; loosening it keeps dense hubs readable.
     positions = nx.spring_layout(
         graph, seed=layout_seed, k=1.6 / np.sqrt(max(num_nodes, 1)), iterations=90
     )
     coordinates = np.array([positions[i] for i in range(num_nodes)])
-
-    center_local = int(
-        (explanation.node_indices == explanation.center.node_index)
-        .nonzero(as_tuple=False)
-        .view(-1)[0]
-    )
 
     figure = go.Figure()
     _add_edge_traces(figure, explanation, coordinates, edges)
@@ -150,10 +143,10 @@ def _add_edge_traces(
 
     bands = [(0.0, 0.5, 0.8, 0.18), (0.5, 0.85, 1.5, 0.34), (0.85, 1.01, 3.0, 0.65)]
     for low, high, width, opacity in bands:
-        xs: list[Optional[float]] = []
-        ys: list[Optional[float]] = []
+        xs: list[float | None] = []
+        ys: list[float | None] = []
         selected = 0
-        for (source, target), weight in zip(edges, scaled):
+        for (source, target), weight in zip(edges, scaled, strict=True):
             if source == target or not (low <= weight < high):
                 continue
             selected += 1
@@ -220,6 +213,7 @@ def _add_node_trace(
                     "thickness": 10, "len": 0.55, "outlinewidth": 0,
                 },
             },
+            customdata=explanation.node_indices.numpy(),
             text=hover, hoverinfo="text", showlegend=False,
         )
     )
@@ -235,7 +229,7 @@ def _add_node_trace(
         )
     )
     # Legend-only proxies: they name the colour encoding without adding marks.
-    for name, colour in (("licit (low risk)", LICIT_BLUE), ("illicit (high risk)", ILLICIT_RED)):
+    for name, colour in (("licit (low risk)", LICIT_TONE), ("illicit (high risk)", ILLICIT_TONE)):
         figure.add_trace(
             go.Scatter(
                 x=[None], y=[None], mode="markers",
@@ -262,7 +256,7 @@ def precision_recall_figure(
     figure.add_trace(
         go.Scatter(
             x=list(recall), y=list(precision), mode="lines",
-            line={"width": 2, "color": LICIT_BLUE}, name=label,
+            line={"width": 2, "color": LICIT_TONE}, name=label,
             hovertemplate="recall %{x:.3f}<br>precision %{y:.3f}<extra></extra>",
         )
     )
@@ -293,8 +287,8 @@ def temporal_f1_figure(per_time_step: Mapping[int, float]) -> go.Figure:
     figure.add_trace(
         go.Scatter(
             x=steps, y=values, mode="lines+markers",
-            line={"width": 2, "color": LICIT_BLUE},
-            marker={"size": 8, "color": LICIT_BLUE,
+            line={"width": 2, "color": LICIT_TONE},
+            marker={"size": 8, "color": LICIT_TONE,
                     "line": {"width": 2, "color": "rgba(255,255,255,0.65)"}},
             hovertemplate="time step %{x}<br>illicit F1 %{y:.3f}<extra></extra>",
         )
@@ -322,14 +316,14 @@ def alert_volume_figure(
     figure.add_trace(
         go.Bar(
             x=list(steps), y=list(alerts), name="alerts raised",
-            marker={"color": ILLICIT_RED, "line": {"width": 0}}, opacity=0.85,
+            marker={"color": ILLICIT_TONE, "line": {"width": 0}}, opacity=0.85,
             hovertemplate="time step %{x}<br>%{y} alerts<extra></extra>",
         )
     )
     figure.add_trace(
         go.Scatter(
             x=list(steps), y=list(actual), mode="lines+markers", name="known illicit",
-            line={"width": 2, "color": LICIT_BLUE}, marker={"size": 7},
+            line={"width": 2, "color": LICIT_TONE}, marker={"size": 7},
             hovertemplate="time step %{x}<br>%{y} labelled illicit<extra></extra>",
         )
     )
@@ -399,12 +393,12 @@ def risk_histogram_figure(
     figure = go.Figure(
         go.Bar(
             x=list(edges), y=list(counts),
-            marker={"color": LICIT_BLUE, "line": {"width": 0}},
+            marker={"color": LICIT_TONE, "line": {"width": 0}},
             hovertemplate="P(illicit) ≈ %{x:.2f}<br>%{y:,} transactions<extra></extra>",
         )
     )
     figure.add_vline(
-        x=threshold, line={"width": 2, "color": ILLICIT_RED},
+        x=threshold, line={"width": 2, "color": ILLICIT_TONE},
         annotation_text=f"threshold {threshold:.2f}",
         annotation_position="top right",
         annotation_font={"size": 11, "color": TEXT_MUTED},
@@ -425,7 +419,7 @@ def feature_attribution_figure(attribution: Mapping[int, float]) -> go.Figure:
     figure = go.Figure(
         go.Bar(
             x=values, y=labels, orientation="h",
-            marker={"color": LICIT_BLUE, "line": {"width": 0}},
+            marker={"color": LICIT_TONE, "line": {"width": 0}},
             hovertemplate="%{y}<br>saliency %{x:.4f}<extra></extra>",
         )
     )
@@ -443,12 +437,12 @@ def class_balance_figure(splits: Sequence[object]) -> go.Figure:
     figure = go.Figure()
     figure.add_trace(
         go.Bar(x=names, y=licit, name="licit",
-               marker={"color": LICIT_BLUE, "line": {"width": 2, "color": "rgba(0,0,0,0)"}},
+               marker={"color": LICIT_TONE, "line": {"width": 2, "color": "rgba(0,0,0,0)"}},
                hovertemplate="%{x}<br>%{y:,} licit<extra></extra>")
     )
     figure.add_trace(
         go.Bar(x=names, y=illicit, name="illicit",
-               marker={"color": ILLICIT_RED, "line": {"width": 2, "color": "rgba(0,0,0,0)"}},
+               marker={"color": ILLICIT_TONE, "line": {"width": 2, "color": "rgba(0,0,0,0)"}},
                hovertemplate="%{x}<br>%{y:,} illicit<extra></extra>")
     )
     layout = base_layout("Labelled transactions per split", height=300)
@@ -497,9 +491,9 @@ def embedding_figure(
 
     figure = go.Figure()
     series = (
-        (UNKNOWN_LABEL, "unlabelled", UNKNOWN_GREY, 0.28, 4),
-        (LICIT_LABEL, "licit", LICIT_BLUE, 0.75, 6),
-        (ILLICIT_LABEL, "illicit", ILLICIT_RED, 0.9, 7),
+        (UNKNOWN_LABEL, "unlabelled", UNKNOWN_TONE, 0.28, 4),
+        (LICIT_LABEL, "licit", LICIT_TONE, 0.75, 6),
+        (ILLICIT_LABEL, "illicit", ILLICIT_TONE, 0.9, 7),
     )
     for code, name, colour, opacity, size in series:
         selector = sampled_labels == code
@@ -550,10 +544,212 @@ def training_history_figure(history: Sequence[object]) -> go.Figure:
     f1 = [getattr(record, "val_illicit_f1", 0.0) for record in history]
     figure = go.Figure()
     figure.add_trace(
-        go.Scatter(x=epochs, y=f1, mode="lines", line={"width": 2, "color": LICIT_BLUE},
+        go.Scatter(x=epochs, y=f1, mode="lines", line={"width": 2, "color": LICIT_TONE},
                    hovertemplate="epoch %{x}<br>val F1 %{y:.4f}<extra></extra>")
     )
     figure.update_layout(**base_layout("Validation illicit F1 per epoch", height=300))
     figure.update_xaxes(**axis_style("epoch"))
     figure.update_yaxes(**axis_style("illicit F1", range=[0, 1]))
     return figure
+
+
+def _neighbourhood_graph(explanation: SubgraphExplanation) -> tuple[nx.Graph, list, int]:
+    """Build the undirected view of a neighbourhood shared by both renderers.
+
+    Returns:
+        The graph, its edge list as local index pairs, and the local index of
+        the investigated node.
+
+    """
+    graph = nx.Graph()
+    graph.add_nodes_from(range(explanation.num_nodes))
+    edges = explanation.edge_index.t().tolist()
+    graph.add_edges_from((int(u), int(v)) for u, v in edges if u != v)
+    center_local = int(
+        (explanation.node_indices == explanation.center.node_index)
+        .nonzero(as_tuple=False)
+        .view(-1)[0]
+    )
+    return graph, edges, center_local
+
+
+def subgraph_figure_3d(
+    explanation: SubgraphExplanation,
+    *,
+    threshold: float,
+    layout_seed: int = 7,
+) -> go.Figure:
+    """Draw a scored k-hop neighbourhood as a rotatable 3-D force layout.
+
+    The 2-D view has to resolve every structural relationship onto one plane,
+    which is what pushes hub-and-spoke fans into overlapping rings.  A third
+    dimension gives the layout room to separate them, and the viewer can orbit
+    to break any remaining occlusion by hand.
+
+    Encoding matches :func:`subgraph_figure` exactly -- fill is risk on the
+    threshold-anchored ramp, size is degree within the neighbourhood, the amber
+    marker is the investigated transaction -- so the two views stay readable as
+    the same picture seen from different numbers of dimensions.
+
+    Args:
+        explanation: A scored neighbourhood from the inference service.
+        threshold: Current operating threshold, anchoring the colour ramp.
+        layout_seed: Seed for the spring layout, so repeated views are stable.
+
+    """
+    if explanation.num_nodes == 0:
+        return empty_figure("No neighbourhood to display.")
+
+    graph, edges, center_local = _neighbourhood_graph(explanation)
+    positions = nx.spring_layout(
+        graph, dim=3, seed=layout_seed,
+        k=1.6 / np.sqrt(max(explanation.num_nodes, 1)), iterations=90,
+    )
+    coordinates = np.array([positions[i] for i in range(explanation.num_nodes)])
+
+    figure = go.Figure()
+    _add_edge_traces_3d(figure, explanation, coordinates, edges)
+    _add_node_trace_3d(figure, explanation, coordinates, graph, threshold, center_local)
+
+    centre = explanation.center
+    title = (
+        f"Transaction {centre.tx_id} · {explanation.num_nodes} nodes · "
+        f"{explanation.num_edges} edges · {explanation.num_flagged} above threshold"
+    )
+    if explanation.truncated:
+        title += " · truncated to nearest neighbours"
+
+    layout = base_layout(title, height=620)
+    layout["showlegend"] = True
+    layout["margin"] = {"l": 0, "r": 0, "t": 44, "b": 0}
+    layout["legend"] = {
+        "orientation": "h", "yanchor": "bottom", "y": -0.02,
+        "xanchor": "left", "x": 0.0,
+        "font": {"size": 11, "color": TEXT_MUTED},
+        "bgcolor": "rgba(0,0,0,0)",
+    }
+    layout["scene"] = scene_layout()
+    # Pinning uirevision keeps the camera where the viewer left it when the
+    # figure is redrawn -- a new threshold or hop count should not throw away
+    # the angle they just found.
+    layout["uirevision"] = "subgraph-3d"
+    figure.update_layout(**layout)
+    return figure
+
+
+def _add_edge_traces_3d(
+    figure: go.Figure,
+    explanation: SubgraphExplanation,
+    coordinates: np.ndarray,
+    edges: Sequence[Sequence[int]],
+) -> None:
+    """Add 3-D edge lines, banded by importance so width can vary per band."""
+    importance = explanation.edge_importance
+    if importance is not None and importance.numel() == len(edges) and importance.numel():
+        weights = importance.numpy()
+        span = float(weights.max() - weights.min())
+        scaled = (weights - weights.min()) / span if span > 1e-9 else np.full_like(weights, 0.5)
+    else:
+        scaled = np.full(len(edges), 0.5)
+
+    bands = [(0.0, 0.5, 1.0, 0.14), (0.5, 0.85, 2.0, 0.30), (0.85, 1.01, 4.0, 0.62)]
+    for low, high, width, opacity in bands:
+        xs: list[float | None] = []
+        ys: list[float | None] = []
+        zs: list[float | None] = []
+        selected = 0
+        for (source, target), weight in zip(edges, scaled, strict=True):
+            if source == target or not (low <= weight < high):
+                continue
+            selected += 1
+            xs += [coordinates[source, 0], coordinates[target, 0], None]
+            ys += [coordinates[source, 1], coordinates[target, 1], None]
+            zs += [coordinates[source, 2], coordinates[target, 2], None]
+        if not selected:
+            continue
+        figure.add_trace(
+            go.Scatter3d(
+                x=xs, y=ys, z=zs, mode="lines",
+                line={"width": width, "color": EDGE_LINE},
+                opacity=opacity, hoverinfo="skip", showlegend=False,
+            )
+        )
+
+
+def _add_node_trace_3d(
+    figure: go.Figure,
+    explanation: SubgraphExplanation,
+    coordinates: np.ndarray,
+    graph: nx.Graph,
+    threshold: float,
+    center_local: int,
+) -> None:
+    """Add the 3-D node scatter, plus a ringed marker on the investigated node."""
+    probabilities = explanation.illicit_probability.numpy()
+    labels = explanation.labels.numpy()
+    tx_ids = explanation.tx_ids.numpy()
+    steps = explanation.time_steps.numpy()
+    degrees = np.array([graph.degree(i) for i in range(explanation.num_nodes)], dtype=float)
+
+    colour_values = [float(normalise_risk(float(p), threshold)) for p in probabilities]
+    span = degrees.max() - degrees.min()
+    # 3-D markers read smaller than their 2-D equivalents at the same value, so
+    # the whole range is scaled up rather than reusing the 2-D constants.
+    low, high = _MIN_MARKER * 0.6, _MAX_MARKER * 0.9
+    sizes = (
+        np.full_like(degrees, (low + high) / 2)
+        if span < 1e-9
+        else low + (degrees - degrees.min()) / span * (high - low)
+    )
+
+    hover = [
+        f"<b>tx {tx_ids[i]}</b><br>P(illicit) {probabilities[i]:.4f}"
+        f"<br>ground truth: {_class_name(int(labels[i]))}"
+        f"<br>time step {int(steps[i])} · degree {int(degrees[i])}"
+        + ("<br><i>under investigation</i>" if i == center_local else "")
+        for i in range(explanation.num_nodes)
+    ]
+
+    figure.add_trace(
+        go.Scatter3d(
+            x=coordinates[:, 0], y=coordinates[:, 1], z=coordinates[:, 2],
+            mode="markers",
+            marker={
+                "size": sizes.tolist(),
+                "color": colour_values,
+                "colorscale": list(RISK_COLORSCALE),
+                "cmin": 0.0, "cmax": 1.0,
+                "line": {"width": 1, "color": "rgba(255,255,255,0.5)"},
+                "colorbar": {
+                    "title": {"text": "risk", "font": {"size": 11, "color": TEXT_MUTED}},
+                    "tickvals": [0.0, 0.5, 1.0],
+                    "ticktext": ["licit", f"thr {threshold:.2f}", "illicit"],
+                    "tickfont": {"size": 10, "color": TEXT_MUTED},
+                    "thickness": 10, "len": 0.55, "outlinewidth": 0,
+                },
+            },
+            customdata=explanation.node_indices.numpy(),
+            text=hover, hoverinfo="text", showlegend=False,
+        )
+    )
+    figure.add_trace(
+        go.Scatter3d(
+            x=[coordinates[center_local, 0]],
+            y=[coordinates[center_local, 1]],
+            z=[coordinates[center_local, 2]],
+            mode="markers",
+            marker={
+                "size": float(sizes[center_local]) + 10,
+                "color": "rgba(0,0,0,0)",
+                "line": {"width": 4, "color": FOCUS_RING},
+            },
+            name="under investigation", hoverinfo="skip", showlegend=True,
+        )
+    )
+    for name, colour in (("licit (low risk)", LICIT_TONE), ("illicit (high risk)", ILLICIT_TONE)):
+        figure.add_trace(
+            go.Scatter3d(
+                x=[None], y=[None], z=[None], mode="markers",
+                marker={"size": 6, "color": colour}, name=name, showlegend=True,
+            )
+        )

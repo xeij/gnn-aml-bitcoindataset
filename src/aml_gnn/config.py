@@ -8,16 +8,25 @@ described by a single file committed alongside its checkpoint.
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Mapping, Optional, Sequence, Type, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 import yaml
+
+if TYPE_CHECKING:  # pragma: no cover - typing-only import
+    from _typeshed import DataclassInstance
 
 ModelName = Literal["gcn", "gat", "graphsage", "mlp"]
 DeviceName = Literal["auto", "cpu", "cuda", "mps"]
 
 _T = TypeVar("_T", bound="_ConfigBase")
+
+
+def _stringify_paths(items: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Dataclass ``dict_factory`` that renders ``Path`` values as strings."""
+    return {key: str(value) if isinstance(value, Path) else value for key, value in items}
 
 
 class _ConfigBase:
@@ -26,14 +35,11 @@ class _ConfigBase:
     def to_dict(self) -> dict[str, Any]:
         """Return a plain-dict view, with ``Path`` values stringified."""
         return dataclasses.asdict(
-            self,  # type: ignore[arg-type]
-            dict_factory=lambda items: {
-                k: str(v) if isinstance(v, Path) else v for k, v in items
-            },
+            cast("DataclassInstance", self), dict_factory=_stringify_paths
         )
 
     @classmethod
-    def from_dict(cls: Type[_T], payload: Mapping[str, Any]) -> _T:
+    def from_dict(cls: type[_T], payload: Mapping[str, Any]) -> _T:
         """Build an instance from a (possibly partial) mapping.
 
         Unknown keys raise rather than being silently dropped, so a typo in a
@@ -59,7 +65,7 @@ class _ConfigBase:
         return cls(**kwargs)
 
 
-def _nested_config_type(annotation: Any) -> Optional[Type[_ConfigBase]]:
+def _nested_config_type(annotation: Any) -> type[_ConfigBase] | None:
     """Resolve a dataclass field annotation to a nested config class, if any."""
     if isinstance(annotation, type) and issubclass(annotation, _ConfigBase):
         return annotation
@@ -142,14 +148,14 @@ class TrainConfig(_ConfigBase):
     weight_decay: float = 5e-4
     #: Inverse-frequency weighting of the illicit class in the loss.  ``None``
     #: disables weighting; ``"balanced"`` derives weights from the train split.
-    class_weight: Optional[Literal["balanced"]] = "balanced"
+    class_weight: Literal["balanced"] | None = "balanced"
     #: Extra multiplier applied to the illicit class weight.  Values above 1
     #: trade precision for recall, which is what an AML analyst usually wants.
     illicit_weight_multiplier: float = 1.0
     early_stopping_patience: int = 40
     #: Validation metric that drives checkpointing and early stopping.
     monitor: str = "illicit_f1"
-    grad_clip_norm: Optional[float] = 1.0
+    grad_clip_norm: float | None = 1.0
     lr_scheduler_patience: int = 15
     seed: int = 42
     device: DeviceName = "auto"
@@ -167,7 +173,7 @@ class ExperimentConfig(_ConfigBase):
     train: TrainConfig = field(default_factory=TrainConfig)
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> "ExperimentConfig":
+    def from_yaml(cls, path: str | Path) -> ExperimentConfig:
         """Load an experiment from a YAML file, applying defaults for absent keys."""
         path = Path(path)
         with path.open("r", encoding="utf-8") as handle:
@@ -201,7 +207,7 @@ def time_step_bounds(config: DataConfig) -> Sequence[tuple[int, int]]:
         if low > high:
             raise ValueError(f"Invalid time-step span ({low}, {high}): low exceeds high")
     ordered = sorted(spans)
-    for (_, prev_high), (next_low, _) in zip(ordered, ordered[1:]):
+    for (_, prev_high), (next_low, _) in zip(ordered, ordered[1:], strict=False):
         if next_low <= prev_high:
             raise ValueError(
                 f"Time-step spans overlap: {ordered}. Temporal splits must be "

@@ -6,8 +6,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -50,11 +51,11 @@ def format_table(runs: Sequence[dict[str, Any]]) -> str:
             f"{test['roc_auc']:.4f}",
             f"{run.get('num_parameters', '—')}",
         ]
-        lines.append(" ".join(v.rjust(w) for v, (_, w) in zip(values, _COLUMNS)))
+        lines.append(" ".join(v.rjust(w) for v, (_, w) in zip(values, _COLUMNS, strict=True)))
     return "\n".join(lines)
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     """Print the benchmark table and return a process exit code."""
     parser = argparse.ArgumentParser(description="Compare completed training runs.")
     parser.add_argument("--dir", type=Path, default=Path("artifacts/checkpoints"))
@@ -64,8 +65,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if not runs:
         print(f"No completed runs found in {args.dir}")
         return 1
-    print(f"\nElliptic Bitcoin — illicit-class results on the held-out test window "
-          f"(time steps 35–49)\n")
+    print("\nElliptic Bitcoin — illicit-class results on the held-out test window "
+          "(time steps 35–49)\n")
     print(format_table(runs))
     print("\nAll metrics are for the illicit class at the threshold tuned on validation.")
     return 0

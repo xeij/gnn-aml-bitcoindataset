@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any
 
 import torch
 from torch import nn
@@ -26,6 +27,7 @@ class EarlyStopping:
         patience: Epochs to wait after the last improvement.
         monitor: Metric key, used only to infer the optimisation direction.
         min_delta: Minimum change that counts as an improvement.
+
     """
 
     patience: int = 40
@@ -33,6 +35,7 @@ class EarlyStopping:
     min_delta: float = 1e-4
 
     def __post_init__(self) -> None:
+        """Derive the optimisation direction and reset the tracking state."""
         self.mode: str = "min" if self.monitor in _MINIMISE else "max"
         self.best: float = float("inf") if self.mode == "min" else float("-inf")
         self.best_epoch: int = -1
@@ -74,7 +77,7 @@ class ModelCheckpoint:
         self.directory.mkdir(parents=True, exist_ok=True)
         self.name = name
         self.monitor = monitor
-        self.best_value: Optional[float] = None
+        self.best_value: float | None = None
         self.path: Path = self.directory / f"{name}.pt"
         self.metrics_path: Path = self.directory / f"{name}_metrics.json"
 

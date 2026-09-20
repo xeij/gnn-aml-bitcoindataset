@@ -10,8 +10,8 @@ without depending on a threshold at all.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
-from typing import Mapping, Optional, Sequence
 
 import numpy as np
 import torch
@@ -96,6 +96,7 @@ class ClassificationMetrics:
         return payload
 
     def __str__(self) -> str:
+        """Return a single-line summary for console logs."""
         return (
             f"{self.split:<5} n={self.num_nodes:>6,} @thr={self.threshold:.2f} | "
             f"illicit P={self.illicit_precision:.4f} R={self.illicit_recall:.4f} "
@@ -115,7 +116,7 @@ def evaluate_predictions(
     *,
     split: str = "eval",
     threshold: float = 0.5,
-    time_step: Optional[Tensor] = None,
+    time_step: Tensor | None = None,
 ) -> ClassificationMetrics:
     """Score predicted illicit probabilities against ground-truth labels.
 
@@ -129,6 +130,7 @@ def evaluate_predictions(
 
     Returns:
         A populated :class:`ClassificationMetrics`.
+
     """
     if y_true.numel() != illicit_probability.numel():
         raise ValueError(
@@ -204,7 +206,7 @@ def select_threshold(
     illicit_probability: Tensor,
     *,
     objective: str = "f1",
-    min_precision: Optional[float] = None,
+    min_precision: float | None = None,
 ) -> tuple[float, float]:
     """Choose an operating threshold on a held-out split.
 
@@ -221,6 +223,7 @@ def select_threshold(
 
     Returns:
         ``(threshold, achieved_objective_value)``.
+
     """
     labels = _as_numpy(y_true).astype(int)
     scores = _as_numpy(illicit_probability).astype(float)
@@ -278,7 +281,7 @@ def masked_evaluate(
     *,
     split: str,
     threshold: float = 0.5,
-    time_step: Optional[Tensor] = None,
+    time_step: Tensor | None = None,
 ) -> ClassificationMetrics:
     """Evaluate a full-graph logit tensor restricted to one split mask."""
     probability = torch.softmax(logits[mask], dim=-1)[:, 1]

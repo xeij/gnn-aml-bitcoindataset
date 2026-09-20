@@ -10,7 +10,7 @@ architecture is a five-line subclass rather than a copied training stack.
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Sequence
+from collections.abc import Sequence
 
 import torch
 import torch.nn.functional as F
@@ -83,15 +83,16 @@ class MessagePassingClassifier(BaseNodeClassifier):
     def reset_parameters(self) -> None:
         """Re-initialise every submodule that exposes a reset hook."""
         for module in self.modules():
-            if module is not self and hasattr(module, "reset_parameters"):
-                module.reset_parameters()
+            reset = getattr(module, "reset_parameters", None)
+            if module is not self and callable(reset):
+                reset()
 
     def encode(self, x: Tensor, edge_index: Tensor) -> Tensor:
         """Run the message-passing stack and return node embeddings."""
         config = self.config
         layer_outputs: list[Tensor] = []
         hidden = x
-        for conv, norm, residual in zip(self.convs, self.norms, self.residuals):
+        for conv, norm, residual in zip(self.convs, self.norms, self.residuals, strict=True):
             identity = hidden
             hidden = conv(hidden, edge_index)
             hidden = norm(hidden)
@@ -104,7 +105,8 @@ class MessagePassingClassifier(BaseNodeClassifier):
 
     def _classify(self, embedding: Tensor) -> Tensor:
         """Map encoder output to class logits."""
-        return self.head(embedding)
+        logits: Tensor = self.head(embedding)
+        return logits
 
 
 @register_model("gcn")
@@ -183,6 +185,7 @@ class GAT(MessagePassingClassifier):
             The edge index the layer actually attended over -- which includes
             the self-loops it inserts -- and the mean attention coefficient
             across heads for each of those edges.
+
         """
         was_training = self.training
         self.eval()
@@ -190,7 +193,7 @@ class GAT(MessagePassingClassifier):
             hidden = x
             target = range(len(self.convs))[layer]
             for index, (conv, norm, residual) in enumerate(
-                zip(self.convs, self.norms, self.residuals)
+                zip(self.convs, self.norms, self.residuals, strict=True)
             ):
                 if index == target:
                     _, (attended_edges, alpha) = conv(

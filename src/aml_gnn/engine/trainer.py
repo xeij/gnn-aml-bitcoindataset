@@ -12,9 +12,10 @@ training window.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 import torch
 import torch.nn.functional as F
@@ -25,6 +26,7 @@ from ..config import ExperimentConfig
 from ..data.splits import class_weights
 from ..logging_utils import get_logger
 from ..models.base import BaseNodeClassifier
+from .calibration import apply_temperature, expected_calibration_error, fit_temperature
 from .callbacks import EarlyStopping, ModelCheckpoint
 from .metrics import ClassificationMetrics, masked_evaluate, select_threshold
 
@@ -93,7 +95,9 @@ class TrainingResult:
     best_val_metrics: ClassificationMetrics
     test_metrics: ClassificationMetrics
     tuned_threshold: float
-    checkpoint_path: Optional[Path]
+    temperature: float
+    calibration_error: float
+    checkpoint_path: Path | None
     total_seconds: float
     config: ExperimentConfig
     extra: dict[str, Any] = field(default_factory=dict)
@@ -103,7 +107,9 @@ class TrainingResult:
         return "\n".join([
             f"Run '{self.config.name}' finished in {self.total_seconds:.1f}s "
             f"({len(self.history)} epochs, best at {self.best_epoch})",
-            f"  tuned threshold: {self.tuned_threshold:.4f} (fitted on validation)",
+            f"  tuned threshold: {self.tuned_threshold:.4f}, temperature: "
+            f"{self.temperature:.3f} (both fitted on validation, "
+            f"val ECE {self.calibration_error:.4f})",
             f"  {self.best_val_metrics}",
             f"  {self.test_metrics}",
         ])
@@ -120,6 +126,7 @@ class Trainer:
         >>> result = trainer.fit()
         >>> result.test_metrics.illicit_f1 > 0.0
         True
+
     """
 
     def __init__(
@@ -128,8 +135,8 @@ class Trainer:
         data: Data,
         config: ExperimentConfig,
         *,
-        device: Optional[torch.device] = None,
-        scaler_state: Optional[dict[str, Tensor]] = None,
+        device: torch.device | None = None,
+        scaler_state: dict[str, Tensor] | None = None,
     ) -> None:
         self.config = config
         self.device = device or resolve_device(config.train.device)
@@ -139,7 +146,7 @@ class Trainer:
 
         set_seed(config.train.seed)
 
-        self.criterion_weight: Optional[Tensor] = None
+        self.criterion_weight: Tensor | None = None
         if config.train.class_weight == "balanced":
             self.criterion_weight = class_weights(
                 data.y.cpu(),
@@ -195,7 +202,7 @@ class Trainer:
 
     @torch.no_grad()
     def evaluate(
-        self, split: str, *, threshold: float = 0.5, logits: Optional[Tensor] = None
+        self, split: str, *, threshold: float = 0.5, logits: Tensor | None = None
     ) -> tuple[ClassificationMetrics, float, Tensor]:
         """Evaluate one split, returning ``(metrics, loss, logits)``.
 
@@ -218,7 +225,7 @@ class Trainer:
 
     # ----------------------------------------------------------------- fit
 
-    def fit(self, *, progress_hook: Optional[ProgressHook] = None) -> TrainingResult:
+    def fit(self, *, progress_hook: ProgressHook | None = None) -> TrainingResult:
         """Train to convergence and return the full result bundle.
 
         The sequence is: optimise on the train window, monitor the validation
@@ -286,20 +293,33 @@ class Trainer:
         self.model.eval()
         with torch.no_grad():
             logits = self.model(self.data.x, self.data.edge_index)
-            probabilities = torch.softmax(logits, dim=-1)[:, 1]
+
+        # Calibrate before choosing the threshold, not after: the threshold is a
+        # point on the probability scale, so rescaling the scale moves it.
+        val_labels = self.data.y[self.data.val_mask]
+        temperature = fit_temperature(logits[self.data.val_mask], val_labels)
+        probabilities = apply_temperature(logits, temperature)
 
         threshold, _ = select_threshold(
-            self.data.y[self.data.val_mask],
+            val_labels,
             probabilities[self.data.val_mask],
             objective="f1",
         )
-        val_metrics, _, _ = self.evaluate("val", threshold=threshold, logits=logits)
-        test_metrics, _, _ = self.evaluate("test", threshold=threshold, logits=logits)
+        calibration_error = expected_calibration_error(
+            probabilities[self.data.val_mask], val_labels
+        )
+        # ``evaluate`` softmaxes whatever logits it is handed, so scaling them
+        # here is what makes its metrics agree with the calibrated threshold.
+        scaled = logits / temperature
+        val_metrics, _, _ = self.evaluate("val", threshold=threshold, logits=scaled)
+        test_metrics, _, _ = self.evaluate("test", threshold=threshold, logits=scaled)
 
-        # Persist the tuned threshold with the weights so serving matches training.
+        # Persist threshold and temperature with the weights so serving matches
+        # training: both are fitted parameters, and both live in the checkpoint.
         if self.checkpoint.path.exists():
             state = torch.load(self.checkpoint.path, map_location="cpu", weights_only=False)
             state["threshold"] = threshold
+            state["temperature"] = temperature
             state["test_metrics"] = test_metrics.to_dict()
             torch.save(state, self.checkpoint.path)
 
@@ -309,6 +329,8 @@ class Trainer:
             best_val_metrics=val_metrics,
             test_metrics=test_metrics,
             tuned_threshold=threshold,
+            temperature=temperature,
+            calibration_error=calibration_error,
             checkpoint_path=self.checkpoint.path if self.checkpoint.path.exists() else None,
             total_seconds=time.perf_counter() - started,
             config=self.config,
@@ -319,6 +341,8 @@ class Trainer:
             "num_parameters": self.model.num_parameters(),
             "total_seconds": result.total_seconds,
             "threshold": threshold,
+            "temperature": temperature,
+            "calibration_error": calibration_error,
             "validation": val_metrics.to_dict(),
             "test": test_metrics.to_dict(),
             "history": [record.__dict__ for record in self.history],
@@ -336,4 +360,7 @@ class Trainer:
             "scaler_state": self._scaler_state,
             "val_metrics": val_metrics.to_dict(),
             "threshold": 0.5,
+            # Overwritten on finalisation; 1.0 keeps a mid-run checkpoint honest
+            # about not having been calibrated yet.
+            "temperature": 1.0,
         }

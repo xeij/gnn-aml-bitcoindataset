@@ -8,9 +8,10 @@ reimplement scoring differently from training.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any
 
 import torch
 from torch import Tensor
@@ -23,6 +24,7 @@ from ..logging_utils import get_logger
 from ..models.base import BaseNodeClassifier
 from ..models.gnn import GAT
 from ..models.registry import build_model
+from .calibration import apply_temperature
 from .metrics import ClassificationMetrics, masked_evaluate
 from .trainer import resolve_device
 
@@ -57,7 +59,7 @@ class NodeAssessment:
         return "unknown" if self.true_label == UNKNOWN_LABEL else CLASS_NAMES[self.true_label]
 
     @property
-    def is_correct(self) -> Optional[bool]:
+    def is_correct(self) -> bool | None:
         """Whether the prediction matches ground truth, or ``None`` if unlabelled."""
         if self.true_label == UNKNOWN_LABEL:
             return None
@@ -87,7 +89,7 @@ class SubgraphExplanation:
     labels: Tensor
     time_steps: Tensor
     tx_ids: Tensor
-    edge_importance: Optional[Tensor] = None
+    edge_importance: Tensor | None = None
     truncated: bool = False
     feature_attribution: Mapping[int, float] = field(default_factory=dict)
 
@@ -120,21 +122,27 @@ class InferenceService:
         data_module: EllipticDataModule,
         *,
         threshold: float = 0.5,
-        device: Optional[torch.device] = None,
-        config: Optional[ExperimentConfig] = None,
+        temperature: float = 1.0,
+        device: torch.device | None = None,
+        config: ExperimentConfig | None = None,
     ) -> None:
         self.device = device or resolve_device("auto")
         self.model = model.to(self.device).eval()
         self.data_module = data_module
         self.data = data_module.data.to(self.device)
         self.threshold = float(threshold)
+        #: Validation-fitted softmax temperature. 1.0 means uncalibrated, which
+        #: is what a checkpoint written before calibration existed implies.
+        self.temperature = float(temperature)
         self.config = config
-        self._probabilities: Optional[Tensor] = None
-        self._embeddings: Optional[Tensor] = None
-        self._degrees: Optional[Tensor] = None
+        self._probabilities: Tensor | None = None
+        self._embeddings: Tensor | None = None
+        self._degrees: Tensor | None = None
+        self._pca: dict[int, Tensor] = {}
+        self._adjacency: tuple[Tensor, Tensor] | None = None
         logger.info(
-            "InferenceService ready: %s on %s at threshold %.4f",
-            self.model.__class__.__name__, self.device, self.threshold,
+            "InferenceService ready: %s on %s at threshold %.4f (temperature %.3f)",
+            self.model.__class__.__name__, self.device, self.threshold, self.temperature,
         )
 
     # ------------------------------------------------------- construction
@@ -144,9 +152,9 @@ class InferenceService:
         cls,
         checkpoint_path: str | Path,
         *,
-        data_module: Optional[EllipticDataModule] = None,
-        device: Optional[torch.device] = None,
-    ) -> "InferenceService":
+        data_module: EllipticDataModule | None = None,
+        device: torch.device | None = None,
+    ) -> InferenceService:
         """Rebuild a service from a checkpoint written by :class:`ModelCheckpoint`.
 
         The checkpoint carries its own architecture config, so the caller does
@@ -176,6 +184,9 @@ class InferenceService:
             model,
             module,
             threshold=float(state.get("threshold", 0.5)),
+            # Absent on checkpoints written before calibration; 1.0 reproduces
+            # exactly what those checkpoints used to serve.
+            temperature=float(state.get("temperature", 1.0)),
             device=device,
             config=config,
         )
@@ -188,8 +199,11 @@ class InferenceService:
         if self._probabilities is None:
             with torch.no_grad():
                 logits = self.model(self.data.x, self.data.edge_index)
-                self._probabilities = torch.softmax(logits, dim=-1)[:, 1].cpu()
-            logger.info("Scored all %s nodes", f"{self._probabilities.numel():,}")
+                self._probabilities = apply_temperature(logits, self.temperature).cpu()
+            logger.info(
+                "Scored all %s nodes at temperature %.3f",
+                f"{self._probabilities.numel():,}", self.temperature,
+            )
         return self._probabilities
 
     @property
@@ -199,6 +213,116 @@ class InferenceService:
             with torch.no_grad():
                 self._embeddings = self.model.encode(self.data.x, self.data.edge_index).cpu()
         return self._embeddings
+
+    def embedding_pca(self, components: int = 3) -> Tensor:
+        """Return the top principal components of the encoder output, cached.
+
+        Every dataset-scale view projects the same 384-dimensional embedding, so
+        the decomposition is computed once per component count and reused rather
+        than recomputed on each redraw.
+
+        Args:
+            components: Number of leading components to return.
+
+        Returns:
+            A ``(num_nodes, components)`` tensor of projected coordinates.
+
+        """
+        cached = self._pca.get(components)
+        if cached is not None:
+            return cached
+        centred = self.embeddings.float()
+        centred = centred - centred.mean(dim=0, keepdim=True)
+        # Economy SVD: the leading right-singular vectors are the PCA axes.
+        _, _, basis = torch.linalg.svd(centred, full_matrices=False)
+        projected: Tensor = centred @ basis[:components].T
+        self._pca[components] = projected
+        return projected
+
+    def _csr(self) -> tuple[Tensor, Tensor]:
+        """Return a cached CSR adjacency as ``(offsets, neighbours)``.
+
+        Breadth-first expansion needs random access to one node's neighbours.
+        Scanning the edge list per node is O(edges) each time, so it is sorted
+        into compressed rows once and reused for every traversal.
+        """
+        if self._adjacency is None:
+            edges = self.data.edge_index.cpu()
+            order = torch.argsort(edges[0], stable=True)
+            sources, targets = edges[0][order], edges[1][order]
+            counts = torch.bincount(sources, minlength=self.data.num_nodes)
+            offsets = torch.cat([torch.zeros(1, dtype=torch.long), counts.cumsum(0)])
+            self._adjacency = (offsets, targets)
+        return self._adjacency
+
+    def neighbours(self, node_index: int) -> Tensor:
+        """Return the direct neighbours of one node."""
+        offsets, targets = self._csr()
+        return targets[offsets[node_index] : offsets[node_index + 1]]
+
+    def expand(
+        self,
+        seeds: Sequence[int],
+        *,
+        hops: int = 1,
+        max_nodes: int = 3_000,
+        keep: Sequence[int] = (),
+    ) -> tuple[Tensor, Tensor]:
+        """Grow a node set outward by breadth-first search.
+
+        This is the primitive behind the flow explorer: start somewhere, walk
+        outward one ring at a time, and stop when the budget is spent.  A ring
+        is admitted whole or not at all where the budget allows, so the frontier
+        stays a genuine hop boundary rather than an arbitrary truncation.
+
+        Args:
+            seeds: Nodes to expand from.
+            hops: How many rings to walk.
+            max_nodes: Ceiling on the returned set.
+            keep: Nodes already on screen, retained at depth 0 so an expansion
+                adds to the view instead of replacing it.
+
+        Returns:
+            The node indices, and the breadth-first depth of each one.
+
+        """
+        offsets, targets = self._csr()
+        depth: dict[int, int] = {int(n): 0 for n in keep}
+        for node in seeds:
+            depth[int(node)] = 0
+        frontier = [int(n) for n in seeds]
+        order: list[int] = list(depth)
+
+        for ring in range(1, hops + 1):
+            if not frontier or len(order) >= max_nodes:
+                break
+            discovered: list[int] = []
+            for node in frontier:
+                block = targets[offsets[node] : offsets[node + 1]]
+                for neighbour in block.tolist():
+                    if neighbour in depth:
+                        continue
+                    depth[neighbour] = ring
+                    discovered.append(neighbour)
+                    order.append(neighbour)
+                    if len(order) >= max_nodes:
+                        break
+                if len(order) >= max_nodes:
+                    break
+            frontier = discovered
+
+        nodes = torch.tensor(order, dtype=torch.long)
+        depths = torch.tensor([depth[int(n)] for n in order], dtype=torch.long)
+        return nodes, depths
+
+    def induced_edges(self, nodes: Tensor) -> Tensor:
+        """Return the edges among ``nodes``, reindexed to local positions."""
+        lookup = torch.full((self.data.num_nodes,), -1, dtype=torch.long)
+        lookup[nodes] = torch.arange(len(nodes))
+        edges = self.data.edge_index.cpu()
+        local_source, local_target = lookup[edges[0]], lookup[edges[1]]
+        keep = (local_source >= 0) & (local_target >= 0) & (local_source < local_target)
+        return torch.stack([local_source[keep], local_target[keep]])
 
     @property
     def degrees(self) -> Tensor:
@@ -214,7 +338,7 @@ class InferenceService:
         self.threshold = float(threshold)
         logger.info("Operating threshold set to %.4f", threshold)
 
-    def assess(self, node_index: int, *, threshold: Optional[float] = None) -> NodeAssessment:
+    def assess(self, node_index: int, *, threshold: float | None = None) -> NodeAssessment:
         """Return the model's verdict on one node index."""
         if not 0 <= node_index < self.data.num_nodes:
             raise IndexError(
@@ -240,7 +364,7 @@ class InferenceService:
             raise KeyError(f"Transaction id {tx_id} is not present in the Elliptic dataset")
         return self.assess(index, **kwargs)
 
-    def evaluate_split(self, split: str, *, threshold: Optional[float] = None
+    def evaluate_split(self, split: str, *, threshold: float | None = None
                        ) -> ClassificationMetrics:
         """Score one named split at the current (or given) threshold."""
         mask = getattr(self.data, f"{split}_mask", None)
@@ -248,8 +372,12 @@ class InferenceService:
             raise ValueError(f"Unknown split {split!r}")
         with torch.no_grad():
             logits = self.model(self.data.x, self.data.edge_index)
+        # ``masked_evaluate`` softmaxes what it is given, so the temperature has
+        # to be folded in here or the calibrated threshold would be applied to
+        # uncalibrated probabilities -- exactly the train/serve drift the
+        # checkpoint is meant to prevent.
         return masked_evaluate(
-            logits.cpu(),
+            logits.cpu() / self.temperature,
             self.data.y.cpu(),
             mask.cpu(),
             split=split,
@@ -260,7 +388,7 @@ class InferenceService:
     def top_alerts(
         self,
         *,
-        split: Optional[str] = "test",
+        split: str | None = "test",
         limit: int = 25,
         include_unlabelled: bool = True,
         min_probability: float = 0.0,
@@ -324,6 +452,7 @@ class InferenceService:
         Returns:
             A :class:`SubgraphExplanation` with node-level scores and, where
             available, edge importance and per-feature attribution.
+
         """
         center = self.assess(node_index)
         subset, edge_index, _, _ = k_hop_subgraph(
@@ -338,7 +467,7 @@ class InferenceService:
             subset, edge_index, truncated = self._truncate(node_index, num_hops, max_nodes)
 
         probabilities = self.probabilities[subset.cpu()]
-        edge_importance: Optional[Tensor] = None
+        edge_importance: Tensor | None = None
         if with_attention and isinstance(self.model, GAT):
             edge_importance = self._attention_importance(subset, edge_index)
 
@@ -402,7 +531,7 @@ class InferenceService:
         )
         return subset, edge_index, True
 
-    def _attention_importance(self, subset: Tensor, edge_index: Tensor) -> Optional[Tensor]:
+    def _attention_importance(self, subset: Tensor, edge_index: Tensor) -> Tensor | None:
         """Return mean attention per subgraph edge, aligned to ``edge_index``."""
         model = self.model
         if not isinstance(model, GAT):
@@ -412,7 +541,8 @@ class InferenceService:
             attended_edges, alpha = model.attention_weights(x, edge_index.to(self.device))
             # attention_weights inserts self-loops, so map back by edge identity.
             lookup: dict[tuple[int, int], float] = {}
-            for (source, target), weight in zip(attended_edges.t().tolist(), alpha.tolist()):
+            pairs = zip(attended_edges.t().tolist(), alpha.tolist(), strict=True)
+            for (source, target), weight in pairs:
                 lookup[(source, target)] = weight
             values = [
                 lookup.get((int(source), int(target)), 0.0)
@@ -441,7 +571,7 @@ class InferenceService:
                 return {}
             saliency = (x.grad[local_index] * x[local_index]).detach().abs().cpu()
             top = torch.topk(saliency, k=min(top_k, saliency.numel()))
-            return {int(i): float(v) for i, v in zip(top.indices, top.values)}
+            return {int(i): float(v) for i, v in zip(top.indices, top.values, strict=True)}
         except Exception:  # pragma: no cover - explanation is never load-bearing
             logger.exception("Feature attribution failed; continuing without it")
             return {}
@@ -454,7 +584,7 @@ class InferenceService:
         edges = torch.linspace(0.0, 1.0, bins + 1)[:-1]
         return edges.tolist(), [int(v) for v in histogram]
 
-    def temporal_alert_volume(self, *, threshold: Optional[float] = None
+    def temporal_alert_volume(self, *, threshold: float | None = None
                               ) -> tuple[list[int], list[int], list[int]]:
         """Return per-time-step ``(steps, alerts, true_illicit)`` counts."""
         threshold = self.threshold if threshold is None else threshold

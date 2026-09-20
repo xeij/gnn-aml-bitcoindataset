@@ -1,30 +1,44 @@
 """Small HTML fragments rendered inside the Gradio layout.
 
-These are written against neutral, translucent surfaces rather than fixed
-background colours so the same markup is legible under Gradio's light and dark
-themes without being regenerated.
+Written against the dark palette in :mod:`.theme`: one surface, one hairline
+border, one corner radius, and type that stays light until a number needs to be
+read at a glance.  Colour appears only where it carries meaning -- a risk band,
+a status tone, a metric that has crossed a line worth noticing.
 """
 
 from __future__ import annotations
 
-from typing import Iterable, Optional, Sequence
+from collections.abc import Iterable, Sequence
 
 from ..engine.inference import NodeAssessment, SubgraphExplanation
-from .theme import RISK_BAND_COLOURS, TEXT_MUTED
+from .theme import (
+    BORDER,
+    INK,
+    INK_SECONDARY,
+    MONO_FAMILY,
+    RISK_BAND_COLOURS,
+    STATUS_TONES,
+    SURFACE_RAISED,
+    TEXT_MUTED,
+)
 
 _CARD_STYLE = (
-    "border:1px solid rgba(125,124,120,0.32);border-radius:10px;"
-    "padding:14px 16px;background:rgba(125,124,120,0.07);"
+    f"border:1px solid {BORDER};"
+    f"padding:14px 16px;background:{SURFACE_RAISED};"
 )
-_LABEL_STYLE = f"font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:{TEXT_MUTED};"
+_LABEL_STYLE = (
+    f"font-size:10px;letter-spacing:.07em;text-transform:uppercase;"
+    f"color:{TEXT_MUTED};font-weight:400;"
+)
+_VALUE_STYLE = f"font-size:14px;font-weight:500;margin-top:3px;color:{INK};"
 
 
 def _chip(text: str, colour: str) -> str:
-    """Return a coloured pill carrying a text label."""
+    """Return a pill carrying a text label, so the colour never stands alone."""
     return (
-        f"<span style='display:inline-block;padding:3px 10px;border-radius:999px;"
-        f"background:{colour};color:#ffffff;font-size:12px;font-weight:600;"
-        f"letter-spacing:.02em;'>{text}</span>"
+        f"<span style='display:inline-block;padding:3px 10px;"
+        f"background:{colour};color:#0d0d0d;font-size:11px;font-weight:600;"
+        f"letter-spacing:.06em;'>{text}</span>"
     )
 
 
@@ -32,30 +46,23 @@ def _field(label: str, value: str) -> str:
     """Return one label/value pair for the verdict card grid."""
     return (
         f"<div><div style='{_LABEL_STYLE}'>{label}</div>"
-        f"<div style='font-size:14px;font-weight:600;margin-top:2px;'>{value}</div></div>"
+        f"<div style='{_VALUE_STYLE}'>{value}</div></div>"
     )
 
 
 def verdict_card(
-    assessment: NodeAssessment, explanation: Optional[SubgraphExplanation] = None
+    assessment: NodeAssessment, explanation: SubgraphExplanation | None = None
 ) -> str:
     """Render the model's verdict on one transaction as an HTML card."""
     band = assessment.risk_band
     colour = RISK_BAND_COLOURS.get(band, TEXT_MUTED)
     probability = assessment.illicit_probability
 
-    correctness = ""
     if assessment.is_correct is None:
-        correctness = (
-            "<span style='font-size:12px;color:" + TEXT_MUTED + ";'>"
-            "no ground-truth label — this is a genuine prediction</span>"
-        )
+        correctness = "no ground-truth label — this is a genuine prediction"
     else:
         verdict = "agrees with" if assessment.is_correct else "contradicts"
-        correctness = (
-            f"<span style='font-size:12px;color:{TEXT_MUTED};'>prediction {verdict} "
-            f"the ground-truth label</span>"
-        )
+        correctness = f"prediction {verdict} the ground-truth label"
 
     neighbourhood = ""
     if explanation is not None:
@@ -66,15 +73,17 @@ def verdict_card(
 
     return f"""
 <div style="{_CARD_STYLE}">
-  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+  <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;">
     {_chip(band.upper(), colour)}
-    <span style="font-size:20px;font-weight:700;">P(illicit) = {probability:.4f}</span>
-    <span style="font-size:12px;color:{TEXT_MUTED};">
-      threshold {assessment.threshold:.3f}</span>
+    <span style="font-size:28px;font-weight:400;color:{INK};font-family:{MONO_FAMILY};">
+      {probability:.4f}</span>
+    <span style="font-size:11px;color:{TEXT_MUTED};letter-spacing:.06em;
+                 text-transform:uppercase;">P(illicit) · threshold
+      {assessment.threshold:.3f}</span>
   </div>
-  <div style="margin-top:6px;">{correctness}</div>
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));
-              gap:12px;margin-top:14px;">
+  <div style="margin-top:8px;font-size:12px;color:{TEXT_MUTED};">{correctness}</div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));
+              gap:14px;margin-top:16px;">
     {_field("transaction id", str(assessment.tx_id))}
     {_field("node index", str(assessment.node_index))}
     {_field("time step", str(assessment.time_step))}
@@ -88,24 +97,64 @@ def verdict_card(
 
 
 def status_banner(message: str, *, tone: str = "info") -> str:
-    """Render a short status message in a translucent banner."""
-    colours = {"info": "#2a78d6", "warn": "#eda100", "error": "#e34948", "ok": "#1baf7a"}
-    accent = colours.get(tone, colours["info"])
+    """Render a short status message behind a coloured rule."""
+    accent = STATUS_TONES.get(tone, STATUS_TONES["info"])
     return (
-        f"<div style='border-left:3px solid {accent};padding:8px 12px;"
-        f"background:rgba(125,124,120,0.09);border-radius:0 8px 8px 0;font-size:13px;'>"
-        f"{message}</div>"
+        f"<div style='border-left:2px solid {accent};padding:8px 12px;"
+        f"background:{SURFACE_RAISED};font-size:12px;"
+        f"font-weight:300;color:{INK_SECONDARY};line-height:1.55;'>{message}</div>"
     )
 
 
 def metric_headline(pairs: Sequence[tuple[str, str]]) -> str:
     """Render a compact KPI row of label/value pairs."""
     cells: Iterable[str] = (
-        f"<div style='{_CARD_STYLE}min-width:130px;flex:1;'>"
+        f"<div style='{_CARD_STYLE}min-width:120px;flex:1;'>"
         f"<div style='{_LABEL_STYLE}'>{label}</div>"
-        f"<div style='font-size:22px;font-weight:700;margin-top:4px;'>{value}</div></div>"
+        f"<div style='font-size:22px;font-weight:400;margin-top:6px;color:{INK};"
+        f"font-family:{MONO_FAMILY};'>{value}</div></div>"
         for label, value in pairs
     )
     return (
-        "<div style='display:flex;gap:10px;flex-wrap:wrap;'>" + "".join(cells) + "</div>"
+        "<div style='display:flex;gap:8px;flex-wrap:wrap;'>" + "".join(cells) + "</div>"
+    )
+
+
+def metric_tiles(tiles: Sequence[tuple[str, str, str]]) -> str:
+    """Render KPI tiles that each carry a line of interpretation.
+
+    A bare number invites the reader to supply their own baseline, which is how
+    a 6.5% base rate gets mistaken for a good precision score.  Each tile states
+    what its number should be compared against.
+
+    Args:
+        tiles: ``(label, value, note)`` triples; the note sits under the value.
+
+    """
+    cells: Iterable[str] = (
+        f"<div style='{_CARD_STYLE}min-width:150px;flex:1;'>"
+        f"<div style='{_LABEL_STYLE}'>{label}</div>"
+        f"<div style='font-size:24px;font-weight:400;margin-top:6px;color:{INK};"
+        f"font-family:{MONO_FAMILY};line-height:1.1;'>{value}</div>"
+        f"<div style='font-size:11px;color:{TEXT_MUTED};margin-top:6px;"
+        f"line-height:1.45;font-weight:300;'>{note}</div></div>"
+        for label, value, note in tiles
+    )
+    return (
+        "<div style='display:flex;gap:8px;flex-wrap:wrap;'>" + "".join(cells) + "</div>"
+    )
+
+
+def section_title(text: str, subtitle: str = "") -> str:
+    """Render a quiet section heading above a group of panels."""
+    tail = (
+        f"<div style='font-size:12px;color:{TEXT_MUTED};margin-top:3px;"
+        f"font-weight:300;'>{subtitle}</div>"
+        if subtitle
+        else ""
+    )
+    return (
+        f"<div style='margin:4px 0 2px;'>"
+        f"<div style='font-size:11px;letter-spacing:.09em;text-transform:uppercase;"
+        f"color:{INK_SECONDARY};font-weight:400;'>{text}</div>{tail}</div>"
     )

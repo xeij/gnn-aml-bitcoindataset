@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import torch.nn.functional as F
 from torch import Tensor, nn
 
 from ..config import ModelConfig
@@ -43,8 +42,10 @@ class MLP(BaseNodeClassifier):
     def encode(self, x: Tensor, edge_index: Tensor) -> Tensor:
         """Return per-node embeddings; ``edge_index`` is accepted and ignored."""
         del edge_index  # Signature parity with the graph models is intentional.
-        return self.encoder(x)
+        embedding: Tensor = self.encoder(x)
+        return embedding
 
     def _classify(self, embedding: Tensor) -> Tensor:
         """Map embeddings to class logits."""
-        return self.head(embedding)
+        logits: Tensor = self.head(embedding)
+        return logits

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Optional, Sequence
 
 from ..app.interface import APP_THEME, build_interface
 from ..app.state import DEFAULT_CHECKPOINT_DIR
@@ -42,7 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     """Launch the Gradio app and return a process exit code."""
     args = build_parser().parse_args(argv)
     configure_logging(args.log_level, log_file=args.log_file, force=True)

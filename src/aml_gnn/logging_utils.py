@@ -11,7 +11,7 @@ import logging
 import logging.handlers
 import sys
 from pathlib import Path
-from typing import Final, Optional
+from typing import Final
 
 PACKAGE_LOGGER_NAME: Final[str] = "aml_gnn"
 
@@ -51,7 +51,7 @@ class _ColourFormatter(logging.Formatter):
 def configure_logging(
     level: int | str = logging.INFO,
     *,
-    log_file: Optional[Path] = None,
+    log_file: Path | None = None,
     force: bool = False,
 ) -> logging.Logger:
     """Install console (and optionally rotating-file) handlers on the package logger.
@@ -65,6 +65,7 @@ def configure_logging(
 
     Returns:
         The configured ``aml_gnn`` logger.
+
     """
     logger = logging.getLogger(PACKAGE_LOGGER_NAME)
     if logger.handlers and not force:
@@ -113,6 +114,7 @@ def get_logger(name: str) -> logging.Logger:
     Args:
         name: Usually ``__name__``.  A fully-qualified module name inside the
             package is used as-is; anything else is nested under ``aml_gnn``.
+
     """
     if name == PACKAGE_LOGGER_NAME or name.startswith(f"{PACKAGE_LOGGER_NAME}."):
         return logging.getLogger(name)

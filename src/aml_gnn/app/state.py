@@ -9,7 +9,6 @@ through this object, which keeps the callbacks in ``interface`` thin.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import torch
 
@@ -42,18 +41,19 @@ class AppState:
         checkpoint_dir: Directory scanned for ``*.pt`` checkpoints.
         default_checkpoint: Name to activate on startup; falls back to the
             first checkpoint found.
+
     """
 
     def __init__(
         self,
         checkpoint_dir: Path = DEFAULT_CHECKPOINT_DIR,
         *,
-        default_checkpoint: Optional[str] = None,
+        default_checkpoint: str | None = None,
     ) -> None:
         self.checkpoint_dir = Path(checkpoint_dir)
         self.checkpoints: dict[str, Path] = discover_checkpoints(self.checkpoint_dir)
-        self._service: Optional[InferenceService] = None
-        self._active_name: Optional[str] = None
+        self._service: InferenceService | None = None
+        self._active_name: str | None = None
         self._data_modules: dict[str, EllipticDataModule] = {}
 
         preferred = default_checkpoint or self._preferred_default()
@@ -81,7 +81,7 @@ class AppState:
         return self._service
 
     @property
-    def active_name(self) -> Optional[str]:
+    def active_name(self) -> str | None:
         """Name of the currently active checkpoint."""
         return self._active_name
 
@@ -90,7 +90,7 @@ class AppState:
         """Names of every discovered checkpoint."""
         return list(self.checkpoints)
 
-    def _preferred_default(self) -> Optional[str]:
+    def _preferred_default(self) -> str | None:
         """Prefer a GAT checkpoint, else the first available one."""
         for name in self.checkpoints:
             if "gat" in name.lower():

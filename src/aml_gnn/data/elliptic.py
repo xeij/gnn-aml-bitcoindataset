@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, Optional
+from typing import Final
 
 import numpy as np
 import torch
@@ -98,14 +98,15 @@ class EllipticDataModule:
         >>> data = module.prepare()
         >>> data.train_mask.sum() > 0
         True
+
     """
 
-    def __init__(self, config: Optional[DataConfig] = None) -> None:
+    def __init__(self, config: DataConfig | None = None) -> None:
         self.config: DataConfig = config or DataConfig()
-        self._data: Optional[Data] = None
-        self._scaler: Optional[StandardScaler] = None
-        self._metadata: Optional[GraphMetadata] = None
-        self._tx_id_to_index: Optional[dict[int, int]] = None
+        self._data: Data | None = None
+        self._scaler: StandardScaler | None = None
+        self._metadata: GraphMetadata | None = None
+        self._tx_id_to_index: dict[int, int] | None = None
 
     # ------------------------------------------------------------------ API
 
@@ -125,7 +126,7 @@ class EllipticDataModule:
         return self._metadata
 
     @property
-    def scaler(self) -> Optional[StandardScaler]:
+    def scaler(self) -> StandardScaler | None:
         """The feature scaler fitted on the training window, if standardising."""
         if self._data is None:
             self.prepare()
@@ -148,6 +149,7 @@ class EllipticDataModule:
             A :class:`Data` object carrying ``x``, ``edge_index``, ``y``,
             ``time_step``, ``tx_id`` and disjoint ``train``/``val``/``test``
             boolean masks over labelled nodes.
+
         """
         if self._data is not None:
             return self._data
@@ -196,7 +198,7 @@ class EllipticDataModule:
 
     # ------------------------------------------------------- lookup helpers
 
-    def index_for_tx_id(self, tx_id: int) -> Optional[int]:
+    def index_for_tx_id(self, tx_id: int) -> int | None:
         """Map an original Elliptic transaction id to its node index.
 
         Returns ``None`` when the id is absent from the dataset.
@@ -210,10 +212,10 @@ class EllipticDataModule:
     def sample_node_indices(
         self,
         *,
-        label: Optional[int] = None,
-        split: Optional[str] = None,
+        label: int | None = None,
+        split: str | None = None,
         limit: int = 25,
-        generator: Optional[torch.Generator] = None,
+        generator: torch.Generator | None = None,
     ) -> list[int]:
         """Return up to ``limit`` node indices matching a label and/or split.
 
@@ -303,7 +305,7 @@ class EllipticDataModule:
         return tx_id, time_step
 
     @staticmethod
-    def _verify_class_alignment(root: Path, feature_tx_ids: "np.ndarray") -> None:
+    def _verify_class_alignment(root: Path, feature_tx_ids: np.ndarray) -> None:
         """Check the positional join between the feature and class CSVs.
 
         Upstream builds ``y`` by taking the class column in file order, which is

@@ -32,7 +32,7 @@ class StandardScaler:
     std: Tensor
 
     @classmethod
-    def fit(cls, x: Tensor, mask: Tensor, *, eps: float = 1e-8) -> "StandardScaler":
+    def fit(cls, x: Tensor, mask: Tensor, *, eps: float = 1e-8) -> StandardScaler:
         """Compute per-column mean and standard deviation over ``mask`` rows."""
         if int(mask.sum()) < 2:
             raise ValueError("StandardScaler.fit needs at least two rows")
@@ -56,7 +56,7 @@ class StandardScaler:
         return {"mean": self.mean, "std": self.std}
 
     @classmethod
-    def from_state_dict(cls, state: dict[str, Tensor]) -> "StandardScaler":
+    def from_state_dict(cls, state: dict[str, Tensor]) -> StandardScaler:
         """Rebuild a scaler saved by :meth:`state_dict`."""
         return cls(mean=state["mean"], std=state["std"])
 

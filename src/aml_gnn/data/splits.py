@@ -8,8 +8,8 @@ the loss is computed on training-window nodes alone.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 import torch
 from torch import Tensor
@@ -68,6 +68,7 @@ def temporal_mask(
 
     Returns:
         Boolean tensor of shape ``[num_nodes]``.
+
     """
     first, last = bounds
     mask = (time_step >= first) & (time_step <= last)
@@ -118,6 +119,7 @@ def class_weights(y: Tensor, mask: Tensor, *, illicit_multiplier: float = 1.0) -
 
     Returns:
         Float tensor ``[w_licit, w_illicit]`` normalised to mean 1.
+
     """
     labels = y[mask]
     counts = torch.bincount(labels, minlength=2)[:2].float()

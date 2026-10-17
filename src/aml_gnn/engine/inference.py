@@ -51,7 +51,7 @@ class NodeAssessment:
     @property
     def predicted_name(self) -> str:
         """Human-readable predicted class."""
-        return CLASS_NAMES[self.predicted_label]
+        return str(CLASS_NAMES[self.predicted_label])
 
     @property
     def true_name(self) -> str:

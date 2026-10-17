@@ -223,7 +223,7 @@ def build_interface(
         index = state.service.data_module.index_for_tx_id(value)
         if index is None:
             raise ValueError(f"Transaction {value} is not in the Elliptic dataset.")
-        return index
+        return int(index)
 
     def on_investigate(query: str, mode: str, hops: int, dimensions: str) -> tuple[Any, ...]:
         """Score one transaction and render its neighbourhood in 2-D or 3-D."""

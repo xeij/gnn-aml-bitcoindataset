@@ -1,0 +1,98 @@
+{
+  "config": {
+    "name": "elliptic-rf-full-s1",
+    "data": {
+      "root": "data/elliptic",
+      "train_time_steps": [
+        1,
+        30
+      ],
+      "val_time_steps": [
+        31,
+        34
+      ],
+      "test_time_steps": [
+        35,
+        49
+      ],
+      "local_features_only": false,
+      "standardise": false,
+      "to_undirected": true,
+      "add_self_loops": false,
+      "force_reload": false
+    },
+    "model": {
+      "name": "random_forest",
+      "n_estimators": 200
+    },
+    "train": {
+      "seed": 1
+    }
+  },
+  "best_epoch": 0,
+  "num_parameters": 136312,
+  "total_seconds": 8.658951374934986,
+  "threshold": 0.46000000834465027,
+  "temperature": 1.0,
+  "calibration_error": NaN,
+  "validation": {
+    "split": "val",
+    "num_nodes": 2989,
+    "threshold": 0.46000000834465027,
+    "accuracy": 0.9909668785547006,
+    "balanced_accuracy": 0.9804696798027212,
+    "illicit_precision": 0.9819639278557114,
+    "illicit_recall": 0.9645669291338582,
+    "illicit_f1": 0.9731876861966237,
+    "licit_f1": 0.9945684972842487,
+    "macro_f1": 0.9838780917404362,
+    "roc_auc": 0.9968429354432269,
+    "average_precision": 0.9910361820415244,
+    "true_positives": 490,
+    "false_positives": 9,
+    "true_negatives": 2472,
+    "false_negatives": 18,
+    "per_time_step": {
+      "31": 0.9615384615384616,
+      "32": 0.983941605839416,
+      "33": 0.8571428571428571,
+      "34": 0.9722222222222222
+    }
+  },
+  "test": {
+    "split": "test",
+    "num_nodes": 16670,
+    "threshold": 0.46000000834465027,
+    "accuracy": 0.9743851229754049,
+    "balanced_accuracy": 0.8595699496484777,
+    "illicit_precision": 0.8565217391304348,
+    "illicit_recall": 0.7276084949215144,
+    "illicit_f1": 0.7868197703444832,
+    "licit_f1": 0.9863739349650573,
+    "macro_f1": 0.8865968526547703,
+    "roc_auc": 0.9216279920745091,
+    "average_precision": 0.7859196659116287,
+    "true_positives": 788,
+    "false_positives": 132,
+    "true_negatives": 15455,
+    "false_negatives": 295,
+    "per_time_step": {
+      "35": 0.967032967032967,
+      "36": 0.9014084507042254,
+      "37": 0.7761194029850746,
+      "38": 0.9345794392523364,
+      "39": 0.9047619047619048,
+      "40": 0.7450980392156863,
+      "41": 0.9473684210526315,
+      "42": 0.854586129753915,
+      "43": 0.0,
+      "44": 0.03571428571428571,
+      "45": 0.0,
+      "46": 0.15384615384615385,
+      "47": 0.0,
+      "48": 0.0,
+      "49": 0.03278688524590164
+    }
+  },
+  "history": []
+}

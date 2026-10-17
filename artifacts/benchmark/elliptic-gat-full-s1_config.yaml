@@ -1,0 +1,40 @@
+name: elliptic-gat-full-s1
+data:
+  root: data/elliptic
+  train_time_steps:
+  - 1
+  - 30
+  val_time_steps:
+  - 31
+  - 34
+  test_time_steps:
+  - 35
+  - 49
+  local_features_only: false
+  standardise: true
+  to_undirected: true
+  add_self_loops: false
+  force_reload: false
+model:
+  name: gat
+  hidden_channels: 128
+  num_layers: 3
+  dropout: 0.3
+  heads: 4
+  jumping_knowledge: true
+  residual: true
+  batch_norm: true
+train:
+  epochs: 300
+  learning_rate: 0.005
+  weight_decay: 0.0005
+  class_weight: balanced
+  illicit_weight_multiplier: 1.0
+  early_stopping_patience: 40
+  monitor: illicit_f1
+  grad_clip_norm: 1.0
+  lr_scheduler_patience: 15
+  seed: 1
+  device: auto
+  checkpoint_dir: artifacts/benchmark
+  log_every: 10

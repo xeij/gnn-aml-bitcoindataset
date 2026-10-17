@@ -1,5 +1,5 @@
 # Data stays out; the served checkpoints (<1 MB each) and benchmark metrics are committed.
-data/
+/data/
 artifacts/*
 !artifacts/checkpoints/
 !artifacts/benchmark/

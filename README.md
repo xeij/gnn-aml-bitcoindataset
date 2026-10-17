@@ -1,34 +1,53 @@
 # Bitcoin AML with graph neural networks
 
-This project trains graph neural networks to flag illicit Bitcoin transactions in the [Elliptic dataset](https://www.kaggle.com/datasets/ellipticco/elliptic-data-set) and serves the results through an investigation UI. The idea is simple: a transaction that looks ordinary on its own can still be suspicious because of who it is connected to, so the model looks at the neighbourhood, not just the row.
+We built an anti-money-laundering pipeline for the [Elliptic dataset](https://www.kaggle.com/datasets/ellipticco/elliptic-data-set), a graph of 203,769 Bitcoin transactions of which 4,545 are labelled illicit. It trains graph neural networks and a random-forest baseline on a strict temporal split, explains every score, and serves the results through an investigation UI with 3-D neighbourhood views.
 
 Stack: PyTorch, PyTorch Geometric, scikit-learn, Gradio, Plotly. Python 3.10 or newer.
 
+![Case view: a flagged transaction, its 3-hop neighbourhood weighted by attention, and the features that drove the score](docs/case-view.png)
+
+![Model performance tab: test metrics, triage economics, calibration and the drift across time steps](docs/model-performance.png)
+
 ## Quickstart
 
-Needs about 800 MB of disk for the dataset. No API keys, no environment variables. The data is downloaded on the first training run.
+About 800 MB of disk for the dataset, which downloads on the first training run. No API keys or environment variables.
 
 ```bash
 python3.12 -m venv .venv && source .venv/bin/activate
-pip install -e .
+pip install -e .[dev]
 
-python scripts/train.py --config configs/gat.yaml   # trains the default model
-python scripts/launch_ui.py                          # opens http://127.0.0.1:7860
+python scripts/launch_ui.py                        # serves the committed checkpoints at http://127.0.0.1:7860
+python scripts/train.py --config configs/gat.yaml  # retrains the default model (about 18 min on an M-series GPU)
+python scripts/train_rf.py                         # random-forest baseline, under a minute
+pytest                                             # 96 tests
 ```
 
-To reproduce the full comparison below:
+The full benchmark below is reproduced by `scripts/run_benchmark.sh` (three seeds, five models, two feature sets, roughly four hours) followed by `python scripts/summarise_runs.py --dir artifacts/benchmark`. Trained checkpoints and every run's metrics are committed under `artifacts/`, so the UI and the tables work without training anything.
 
-```bash
-scripts/run_benchmark.sh          # trains mlp, gcn, graphsage and gat in turn
-python scripts/summarise_runs.py  # prints the results table
-pytest                            # 95 tests, runs in a couple of seconds
-```
+## What we found
 
-## The dataset
+All numbers are illicit-class scores on the held-out test window (time steps 35 to 49, 16,670 labelled transactions) at a threshold tuned on the validation window. Mean ± standard deviation over seeds 0, 1 and 2. "All" uses the 165 Elliptic features; "local" drops the 72 that are already hand-built neighbourhood aggregates, leaving the 93 that describe the transaction alone.
 
-Elliptic is a graph of 203,769 Bitcoin transactions joined by 234,355 payment edges, observed over 49 time steps of roughly two weeks each. Every transaction carries 165 anonymised features. Only 23% of transactions are labelled, and of those about one in ten is illicit. The rest are unknown and only contribute structure.
+| Model | Features | Train time | Precision | Recall | F1 | Avg precision | ROC AUC |
+|---|---|---|---|---|---|---|---|
+| Random forest | all | 7 s | 0.919 ± 0.054 | 0.723 ± 0.004 | **0.809 ± 0.019** | 0.784 ± 0.002 | 0.919 ± 0.003 |
+| GCN | all | 11 min | 0.537 ± 0.030 | 0.566 ± 0.032 | 0.550 ± 0.019 | 0.456 ± 0.032 | 0.888 ± 0.004 |
+| GAT (GATv2) | all | 48 min | 0.568 ± 0.050 | 0.530 ± 0.068 | 0.547 ± 0.053 | 0.481 ± 0.071 | 0.889 ± 0.005 |
+| GraphSAGE | all | 5 min | 0.500 ± 0.018 | 0.599 ± 0.026 | 0.545 ± 0.021 | 0.470 ± 0.045 | 0.873 ± 0.005 |
+| MLP (no graph) | all | 1 min | 0.364 ± 0.021 | 0.659 ± 0.042 | 0.468 ± 0.019 | 0.294 ± 0.046 | 0.857 ± 0.013 |
+| Random forest | local | 4 s | 0.860 ± 0.071 | 0.713 ± 0.009 | **0.778 ± 0.025** | 0.776 ± 0.002 | 0.891 ± 0.005 |
+| GAT (GATv2) | local | 49 min | 0.379 ± 0.016 | 0.726 ± 0.002 | 0.498 ± 0.013 | 0.419 ± 0.034 | 0.882 ± 0.007 |
+| GraphSAGE | local | 7 min | 0.365 ± 0.026 | 0.717 ± 0.011 | 0.484 ± 0.021 | 0.358 ± 0.009 | 0.872 ± 0.002 |
+| GCN | local | 5 min | 0.348 ± 0.006 | 0.711 ± 0.004 | 0.467 ± 0.005 | 0.307 ± 0.020 | 0.864 ± 0.004 |
+| MLP (no graph) | local | 1 min | 0.336 ± 0.059 | 0.722 ± 0.017 | 0.456 ± 0.049 | 0.266 ± 0.027 | 0.857 ± 0.007 |
 
-One property of the data drives most of the design: every edge connects two transactions in the same time step. The graph is really 49 separate islands. That makes a random train/test split a trap, because near-identical neighbours end up on both sides and the score looks far better than it is. This project splits by time instead.
+Training times are per run on an Apple M-series GPU with two runs sharing it, so they are upper bounds.
+
+**A random forest beats every graph model, by a lot.** This reproduces the finding in Weber et al. (2019), the paper that introduced the dataset, and we think it is the most useful result here. The GNNs add message passing on top of features that already summarise the neighbourhood, and on this data that extra structure buys less than a well-regularised ensemble of trees. We started this project expecting the opposite.
+
+**Message passing is worth a few points, not a few tenths.** With all features, the three graph models land within 0.005 F1 of each other and about 0.08 above the no-graph MLP. Strip out the aggregate features and that gap shrinks to between 0.01 and 0.04, which is the size of the seed-to-seed spread. Attention does not earn its cost either: the GAT takes four to ten times longer to train than GCN or GraphSAGE for the same mean F1 and the widest variance of the three. Our earlier single-seed run of the GAT (seed 42, the checkpoint the UI serves) scored 0.625 F1, which sits well above the three-seed mean and would have overstated the case for attention had we stopped there.
+
+**The temporal split is what makes these numbers mean anything.** Every edge in Elliptic joins two transactions from the same time step, so the graph is really 49 disconnected islands. A random split puts near-identical neighbours on both sides and inflates every score. We train on steps 1 to 30, tune on 31 to 34 and report on 35 to 49, and nodes outside the training window are masked rather than removed so message passing still sees the full graph.
 
 | Split | Time steps | Labelled nodes | Illicit | Illicit share |
 |---|---|---|---|---|
@@ -36,76 +55,48 @@ One property of the data drives most of the design: every edge connects two tran
 | Validation | 31 to 34 | 2,989 | 508 | 17.0% |
 | Test | 35 to 49 | 16,670 | 1,083 | 6.5% |
 
-Nodes outside the training window are masked, not deleted, so message passing still sees the whole graph while the loss only touches training nodes.
+### Everything collapses after step 43
 
-## How it works
+![Per-step illicit F1 on the test window with the dark-market shutdown marked](docs/drift.png)
 
-The pipeline is four stages, and each one lives in its own module under `src/aml_gnn`.
-
-**Data** (`data/`). The PyTorch Geometric loader throws away the transaction ids and time steps after building its own masks. This project reads them back from the raw CSV, caches them, checks that the feature file and the class file are row-aligned, and rebuilds the three temporal splits. Features are standardised using statistics from the training window only. The edge list is made undirected.
-
-**Models** (`models/`). Four architectures share one template: a stack of `conv, norm, ReLU, dropout` blocks with residual connections, jumping knowledge (the outputs of every layer are concatenated before classification), and a small MLP head.
-
-- GAT: three layers of GATv2 attention with four heads. The default. Attention decides how much each neighbour matters, and the learned coefficients double as per-edge explanations in the UI.
-- GraphSAGE: mean aggregation with a separate weight for the node's own features.
-- GCN: degree-normalised averaging. Cheapest, and the weakest of the three graph models here.
-- MLP: the same depth and width but ignores the edges completely. This is the control.
-
-The MLP control matters more than it sounds. Elliptic's 165 features already include 72 hand-built neighbourhood aggregates, so a plain MLP is a real contender. Any claim that "the graph helped" has to be measured against it.
-
-**Training** (`engine/trainer.py`). The whole graph fits in memory (about 135 MB in float32), so training is full-batch: every node sees its exact 3-hop neighbourhood and there is no sampling noise. Loss is class-weighted cross-entropy. Early stopping watches illicit F1 on the validation window, learning rate drops on plateau, gradients are clipped. The decision threshold is not 0.5. It is tuned on validation to maximise illicit F1, because in AML the operating point is a business choice about how many false alarms a team can absorb.
-
-**Calibration** (`engine/calibration.py`). Cross-entropy keeps pushing logits apart long after the classes are separated. On this data the gap reached the thousands, so float32 softmax reported exactly 1.0 on transactions the model got wrong about a quarter of the time. A single temperature fitted on validation now divides the logits before the softmax. This cannot change the ranking, so F1, AUC and average precision are untouched, but the probabilities shown to an analyst now mean what they say. Expected calibration error on the test window dropped to 0.035 for the GAT.
-
-**Serving** (`engine/inference.py` and `app/`). A single `InferenceService` loads a checkpoint, scores the graph once, and answers questions the UI asks: rank the riskiest transactions in a window, extract and explain a k-hop neighbourhood, walk the payment graph outward from a seed. Explanations come from two sources: GAT attention weights as edge importance, and an input-gradient saliency map over the centre node's features. The Gradio app has five tabs: a case view with a rotatable 3-D neighbourhood, a ranked alert queue, a model performance page with per-step drift, a flow explorer laid out by hop distance, and a dataset-scale atlas of the learned embedding.
-
-## Results
-
-All numbers are on the held-out test window (steps 35 to 49, 16,670 labelled transactions), for the illicit class, at the threshold tuned on validation. Single run, seed 42, no hyperparameter search.
-
-| Model | Parameters | Train time | Precision | Recall | F1 | Avg precision | ROC AUC |
-|---|---|---|---|---|---|---|---|
-| GAT (GATv2) | 180,738 | 18 min | 0.662 | 0.592 | **0.625** | 0.561 | 0.906 |
-| GraphSAGE | 179,586 | 3 min | 0.464 | 0.596 | 0.522 | 0.418 | 0.866 |
-| GCN | 125,698 | 4 min | 0.451 | 0.507 | 0.478 | 0.342 | 0.877 |
-| MLP (no graph) | 71,810 | 24 s | 0.254 | 0.594 | 0.356 | 0.181 | 0.819 |
-
-A few things stand out.
-
-**The graph is worth between 0.12 and 0.27 F1.** Every graph model beats the MLP control, and the attention model beats it by a wide margin. That is the honest estimate of what message passing adds on top of features that already contain neighbourhood summaries.
-
-**Recall is nearly identical across models, precision is not.** All four catch roughly 59% of illicit transactions (the GCN a bit less). What separates them is how many false alarms come with that. The GAT reaches its recall with 327 false positives. The MLP needs 1,884 to get the same number of true positives. For an investigator that is the whole story.
-
-**Attention earns its cost.** The GAT took six times longer to train than GraphSAGE for 0.10 more F1. Laundering structure is about which counterparty a transaction touches rather than how many, and a model that can weight neighbours unequally has the right bias for that.
-
-**Validation scores are much higher than test scores.** The GAT hits 0.907 F1 on validation and 0.625 on test. This is not overfitting in the usual sense. The test window spans a real-world event, explained next.
-
-### Performance collapses after step 43
-
-The dominant illicit marketplace in the data was shut down around time step 43. After that, the illicit transactions that remain look nothing like the ones the model trained on. Per-step F1 computed from the saved GAT checkpoint:
+The dominant illicit marketplace in the data was shut down around time step 43. The illicit transactions that remain afterwards look nothing like the ones any model trained on. Per-step F1 of the served checkpoints, pooled over two regimes:
 
 | Steps | Labelled | Illicit | Illicit share | GAT F1 | GraphSAGE F1 | GCN F1 | MLP F1 |
 |---|---|---|---|---|---|---|---|
 | 35 to 42 | 9,983 | 914 | 9.2% | 0.707 | 0.606 | 0.569 | 0.432 |
 | 43 to 49 | 6,687 | 169 | 2.5% | 0.024 | 0.022 | 0.005 | 0.009 |
 
-In step 35 the GAT scores 0.936. From step 43 on it is close to zero on every model, and often exactly zero. The headline 0.625 is an average over two regimes: one where the model works well and one where it does not work at all. A random split would have hidden this completely. The performance tab in the UI plots the drop rather than smoothing it away.
+The benchmark runs all agree. Averaging per-step F1 over the three seeds, no model in any configuration scores above 0.07 after step 43, the random forest included, while every one of them sits between 0.55 and 0.89 before it.
 
-This is the most important finding in the project. It says the model learned the signature of a particular criminal operation, and when that operation disappeared the signature went with it. Any deployment would need retraining on fresh labels as the landscape shifts.
+Every headline number above averages a regime where the models work and one where they do not work at all. The models learned the signature of one criminal operation and lost it when that operation disappeared. A deployment would need retraining on fresh labels as the landscape shifts. The performance tab plots the drop instead of smoothing it away.
 
-## What this means in practice
+### What this buys an investigator
 
-Think of the model as a triage tool, not a verdict. At a 6.5% base rate an analyst who picks transactions at random opens about fifteen dead ends for every real case. The GAT turns the 16,670-transaction test window into a queue of 968 alerts, of which 641 are genuinely illicit. That is a 66% hit rate, a tenfold improvement over the base rate, and it catches 59% of all illicit activity in the window while reviewing under 6% of it.
+At a 6.5% base rate an analyst picking transactions at random opens about fifteen dead ends per real case. The served GAT turns the test window into a queue of 968 alerts of which 641 are illicit: a 66% hit rate, tenfold over the base rate, catching 59% of all illicit activity while reviewing under 6% of transactions. The random forest does better still. The threshold slider in the UI moves that trade-off live.
 
-The threshold slider in the UI moves that trade-off live. Lower it and recall goes up at the cost of more dead ends. Raise it and the queue gets shorter and cleaner. The precision/recall curve on the performance tab shows the full range.
+## How it works
 
-The explanation tools are there so an analyst does not have to take the score on faith. The case view shows the 2-hop or 3-hop neighbourhood that produced the prediction, with edge thickness driven by attention weight and the riskiest neighbours listed alongside. The flow explorer answers "where does this money go" on a few thousand nodes at once.
+Four stages, one module each under `src/aml_gnn`.
+
+**Data.** The PyTorch Geometric loader discards transaction ids and time steps. We read them back from the raw CSV, verify that the feature and label files are row-aligned, build the three temporal masks, standardise features with training-window statistics only, and make the edge list undirected.
+
+**Models.** GATv2, GraphSAGE, GCN and an MLP control share one template: a stack of `conv, norm, ReLU, dropout` blocks with residual connections, jumping knowledge over all layers, and a small classification head. The MLP has the same depth and width and ignores the edges, so the difference between it and any graph model is the contribution of message passing and nothing else. The random forest is 200 scikit-learn trees on the same splits.
+
+**Training.** The whole graph fits in memory (about 135 MB), so training is full-batch with no neighbour sampling. Class-weighted cross-entropy, early stopping on validation illicit F1, learning-rate drop on plateau, gradient clipping. The decision threshold is tuned on validation rather than fixed at 0.5, because the operating point in AML is a choice about how many false alarms a team can absorb.
+
+**Calibration.** Cross-entropy kept pushing logits apart long after the classes separated, to the point that float32 softmax reported exactly 1.0 on transactions the model got wrong. We fit a single temperature on validation and divide the logits by it before the softmax. Rankings and therefore F1, AUC and AP are unchanged, but the probabilities shown to an analyst now mean what they say: expected calibration error on the test window fell to 0.035 for the GAT.
+
+**Serving.** One `InferenceService` loads a checkpoint, scores the graph once, and answers the UI's questions: rank a window, extract and explain a k-hop neighbourhood, walk the payment graph outward from a seed. Explanations come from GAT attention weights as edge importance and an input-gradient saliency map over the centre node's features.
+
+![Flow explorer: a four-hop walk outward from a seed transaction, laid out by hop distance](docs/flow-explorer.png)
+
+The Gradio app has five tabs: a case view, a ranked alert queue, the model performance page, the flow explorer above, and an atlas of the learned embedding across all 49 time steps.
 
 ## Limitations
 
-- Everything comes from one run at one seed. The numbers describe where this configuration lands, not an upper bound.
-- The model is transductive. Scoring a new transaction means re-running the whole graph, which takes about a second rather than milliseconds.
-- The 165 features are anonymised. Feature attribution can name a dimension but not say what it measures.
-- The post-step-43 collapse is not solved here. It is measured and shown.
-- The MLP remains badly calibrated even after temperature scaling (expected calibration error 0.23), so its probabilities should not be read as probabilities.
-- Validation is only four time steps with a 17% illicit rate, well above either train or test. Thresholds and temperatures tuned on it carry that skew.
+- Three seeds is enough to see that the spread is large, not enough to put tight intervals on it. No hyperparameter search was done for any model.
+- The GNNs are transductive. Scoring a new transaction means re-running the whole graph, about a second rather than milliseconds.
+- The 165 features are anonymised, so feature attribution can name a dimension but not say what it measures.
+- The post-step-43 collapse is measured and shown, not solved.
+- Validation is four time steps with a 17% illicit rate, well above train or test. Thresholds and temperatures tuned on it carry that skew.
+- The served GAT checkpoint is a single seed-42 run that landed above the multi-seed mean. It is kept because its attention weights power the explanations, not because it is representative.

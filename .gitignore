@@ -1,10 +1,10 @@
-# The README is maintained outside version control.
-README.md
-
-# Data and trained artifacts
+# Data stays out; the served checkpoints (<1 MB each) and benchmark metrics are committed.
 data/
-artifacts/
-*.pt
+artifacts/*
+!artifacts/checkpoints/
+!artifacts/benchmark/
+artifacts/benchmark/*.pt
+artifacts/benchmark/*.log
 *.pth
 *.csv
 *.zip

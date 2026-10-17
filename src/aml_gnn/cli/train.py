@@ -48,6 +48,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--local-features-only", action="store_true",
         help="Drop the 72 aggregated neighbour features (ablation).",
     )
+    parser.add_argument(
+        "--checkpoint-dir", type=Path, default=None,
+        help="Override where the checkpoint and metrics sidecar are written.",
+    )
     parser.add_argument("--log-file", type=Path, default=None, help="Also log to this file.")
     parser.add_argument(
         "--log-level", default="INFO",
@@ -78,6 +82,8 @@ def apply_overrides(config: ExperimentConfig, args: argparse.Namespace) -> Exper
         config.data.local_features_only = True
     if args.name is not None:
         config.name = args.name
+    if args.checkpoint_dir is not None:
+        config.train.checkpoint_dir = args.checkpoint_dir
     return config
 
 

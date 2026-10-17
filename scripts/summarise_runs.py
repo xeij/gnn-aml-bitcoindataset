@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import statistics
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -55,6 +56,38 @@ def format_table(runs: Sequence[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+_AGG_KEYS = ("illicit_precision", "illicit_recall", "illicit_f1", "average_precision", "roc_auc")
+
+
+def aggregate(runs: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Group runs by (model, feature set) and report mean and std over seeds."""
+    groups: dict[tuple[str, bool], list[dict[str, Any]]] = {}
+    for run in runs:
+        key = (run["config"]["model"]["name"], bool(run["config"]["data"]["local_features_only"]))
+        groups.setdefault(key, []).append(run)
+    rows = []
+    for (model, local_only), members in groups.items():
+        row: dict[str, Any] = {"model": model, "features": "local" if local_only else "all",
+                               "seeds": len(members)}
+        for metric in _AGG_KEYS:
+            values = [m["test"][metric] for m in members]
+            row[metric] = (statistics.fmean(values),
+                           statistics.stdev(values) if len(values) > 1 else 0.0)
+        rows.append(row)
+    return sorted(rows, key=lambda r: (r["features"], -r["illicit_f1"][0]))
+
+
+def format_aggregate(rows: Sequence[dict[str, Any]]) -> str:
+    """Render the per-group mean ± std table as GitHub-flavoured Markdown."""
+    header = "| model | features | seeds | precision | recall | F1 | AP | AUC |"
+    lines = [header, "|---|---|---|---|---|---|---|---|"]
+    for row in rows:
+        cells = [row["model"], row["features"], str(row["seeds"])]
+        cells += [f"{m:.3f} ± {s:.3f}" for m, s in (row[k] for k in _AGG_KEYS)]
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Print the benchmark table and return a process exit code."""
     parser = argparse.ArgumentParser(description="Compare completed training runs.")
@@ -69,6 +102,10 @@ def main(argv: Sequence[str] | None = None) -> int:
           "(time steps 35–49)\n")
     print(format_table(runs))
     print("\nAll metrics are for the illicit class at the threshold tuned on validation.")
+    rows = aggregate(runs)
+    if any(row["seeds"] > 1 for row in rows):
+        print("\nMean ± std over seeds, test window:\n")
+        print(format_aggregate(rows))
     return 0
 
 

@@ -52,6 +52,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--checkpoint-dir", type=Path, default=None,
         help="Override where the checkpoint and metrics sidecar are written.",
     )
+    for split in ("train", "val", "test"):
+        parser.add_argument(
+            f"--{split}-steps", type=int, nargs=2, metavar=("FIRST", "LAST"), default=None,
+            help=f"Override the {split} time-step window.",
+        )
     parser.add_argument("--log-file", type=Path, default=None, help="Also log to this file.")
     parser.add_argument(
         "--log-level", default="INFO",
@@ -84,6 +89,10 @@ def apply_overrides(config: ExperimentConfig, args: argparse.Namespace) -> Exper
         config.name = args.name
     if args.checkpoint_dir is not None:
         config.train.checkpoint_dir = args.checkpoint_dir
+    for split in ("train", "val", "test"):
+        bounds = getattr(args, f"{split}_steps")
+        if bounds is not None:
+            setattr(config.data, f"{split}_time_steps", tuple(bounds))
     return config
 
 

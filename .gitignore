@@ -3,8 +3,11 @@
 artifacts/*
 !artifacts/checkpoints/
 !artifacts/benchmark/
+!artifacts/drift/
 artifacts/benchmark/*.pt
 artifacts/benchmark/*.log
+artifacts/drift/**/*.pt
+artifacts/drift/*.log
 *.pth
 *.csv
 *.zip

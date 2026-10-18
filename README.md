@@ -68,7 +68,20 @@ The dominant illicit marketplace in the data was shut down around time step 43. 
 
 The benchmark runs all agree. Averaging per-step F1 over the three seeds, no model in any configuration scores above 0.07 after step 43, the random forest included, while every one of them sits between 0.55 and 0.89 before it.
 
-Every headline number above averages a regime where the models work and one where they do not work at all. The models learned the signature of one criminal operation and lost it when that operation disappeared. A deployment would need retraining on fresh labels as the landscape shifts. The performance tab plots the drop instead of smoothing it away.
+Every headline number above averages a regime where the models work and one where they do not work at all. The models learned the signature of one criminal operation and lost it when that operation disappeared. The performance tab plots the drop instead of smoothing it away.
+
+### Does retraining on fresher labels fix it?
+
+We tested the obvious remedy by moving the training window forward and scoring only the post-shutdown steps. Illicit F1 pooled over the scored steps, mean of three seeds, same threshold protocol as above:
+
+| Training window | Scored on | Random forest | MLP | GCN | GraphSAGE |
+|---|---|---|---|---|---|
+| Steps 1 to 30 (benchmark models) | 43 to 49 | 0.029 | 0.015 | 0.007 | 0.019 |
+| Steps 1 to 38 | 43 to 49 | 0.032 | 0.035 | 0.019 | 0.026 |
+| Steps 1 to 30 (benchmark models) | 45 to 49 | 0.029 | 0.026 | 0.013 | 0.020 |
+| Steps 1 to 43 | 45 to 49 | 0.104 | 0.150 | 0.171 | 0.071 |
+
+More pre-shutdown data does nothing: training through step 38 instead of 30 leaves every model below 0.04. Two post-shutdown steps of labels help, but only to between 0.07 and 0.17 F1 against 0.55 to 0.89 before the shutdown, and on a window with just 121 illicit transactions among 3,726 labelled ones. The neural models recover more than the random forest here, which reverses the main benchmark, though three seeds on 121 positives is thin evidence for that. The practical reading is that a deployment cannot wait for drift to show up in the metrics and retrain its way out; the post-shutdown illicit activity is a different population and needs its own labels in volume. `scripts/run_drift.sh` reproduces this table.
 
 ### What this buys an investigator
 
@@ -97,6 +110,6 @@ The Gradio app has five tabs: a case view, a ranked alert queue, the model perfo
 - Three seeds is enough to see that the spread is large, not enough to put tight intervals on it. No hyperparameter search was done for any model.
 - The GNNs are transductive. Scoring a new transaction means re-running the whole graph, about a second rather than milliseconds.
 - The 165 features are anonymised, so feature attribution can name a dimension but not say what it measures.
-- The post-step-43 collapse is measured and shown, not solved.
+- The post-step-43 collapse is measured, and the retraining experiment shows it is not fixed by fresher labels alone. We did not try drift detection or domain adaptation.
 - Validation is four time steps with a 17% illicit rate, well above train or test. Thresholds and temperatures tuned on it carry that skew.
 - The served GAT checkpoint is a single seed-42 run that landed above the multi-seed mean. It is kept because its attention weights power the explanations, not because it is representative.

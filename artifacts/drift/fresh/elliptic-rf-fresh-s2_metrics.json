@@ -1,0 +1,85 @@
+{
+  "config": {
+    "name": "elliptic-rf-fresh-s2",
+    "data": {
+      "root": "data/elliptic",
+      "train_time_steps": [
+        1,
+        43
+      ],
+      "val_time_steps": [
+        44,
+        44
+      ],
+      "test_time_steps": [
+        45,
+        49
+      ],
+      "local_features_only": false,
+      "standardise": false,
+      "to_undirected": true,
+      "add_self_loops": false,
+      "force_reload": false
+    },
+    "model": {
+      "name": "random_forest",
+      "n_estimators": 200
+    },
+    "train": {
+      "seed": 2
+    }
+  },
+  "best_epoch": 0,
+  "num_parameters": 225518,
+  "total_seconds": 6.721201041946188,
+  "threshold": 0.1899999976158142,
+  "temperature": 1.0,
+  "calibration_error": NaN,
+  "validation": {
+    "split": "val",
+    "num_nodes": 1591,
+    "threshold": 0.1899999976158142,
+    "accuracy": 0.9685732243871779,
+    "balanced_accuracy": 0.7994176770899808,
+    "illicit_precision": 0.26785714285714285,
+    "illicit_recall": 0.625,
+    "illicit_f1": 0.375,
+    "licit_f1": 0.9838813668600903,
+    "macro_f1": 0.6794406834300452,
+    "roc_auc": 0.9633588598170602,
+    "average_precision": 0.24690302841129624,
+    "true_positives": 15,
+    "false_positives": 41,
+    "true_negatives": 1526,
+    "false_negatives": 9,
+    "per_time_step": {
+      "44": 0.375
+    }
+  },
+  "test": {
+    "split": "test",
+    "num_nodes": 3726,
+    "threshold": 0.1899999976158142,
+    "accuracy": 0.9347826086956522,
+    "balanced_accuracy": 0.5509691544113433,
+    "illicit_precision": 0.10897435897435898,
+    "illicit_recall": 0.14049586776859505,
+    "illicit_f1": 0.12274368231046931,
+    "licit_f1": 0.9661324041811846,
+    "macro_f1": 0.544438043245827,
+    "roc_auc": 0.8691693125938492,
+    "average_precision": 0.12407684117489905,
+    "true_positives": 17,
+    "false_positives": 139,
+    "true_negatives": 3466,
+    "false_negatives": 104,
+    "per_time_step": {
+      "45": 0.030303030303030304,
+      "46": 0.09523809523809523,
+      "47": 0.05970149253731343,
+      "48": 0.2127659574468085,
+      "49": 0.21052631578947367
+    }
+  },
+  "history": []
+}

@@ -38,11 +38,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--local-features-only", action="store_true")
     parser.add_argument("--name", default="elliptic-rf")
     parser.add_argument("--checkpoint-dir", type=Path, default=Path("artifacts/checkpoints"))
+    for split in ("train", "val", "test"):
+        parser.add_argument(f"--{split}-steps", type=int, nargs=2, default=None)
     args = parser.parse_args(argv)
     configure_logging("INFO", force=True)
 
     started = time.perf_counter()
-    data_config = DataConfig(local_features_only=args.local_features_only, standardise=False)
+    windows = {
+        f"{split}_time_steps": tuple(bounds)
+        for split in ("train", "val", "test")
+        if (bounds := getattr(args, f"{split}_steps")) is not None
+    }
+    data_config = DataConfig(
+        local_features_only=args.local_features_only, standardise=False, **windows
+    )
     module = EllipticDataModule(data_config)
     data = module.prepare()
     x, y = data.x.numpy(), data.y.numpy()
